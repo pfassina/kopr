@@ -32,11 +32,15 @@ func New(cfg config.Config) App {
 	}
 }
 
-func (a App) Init() tea.Cmd {
+func (a *App) SetProgram(p *tea.Program) {
+	a.editor.SetProgram(p)
+}
+
+func (a *App) Init() tea.Cmd {
 	return a.editor.Init()
 }
 
-func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
@@ -45,17 +49,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Forward all messages to the editor
 	var cmd tea.Cmd
 	a.editor, cmd = a.editor.Update(msg)
 
 	return a, cmd
 }
 
-func (a App) View() string {
-	if !a.ready {
-		// Check if we got a size yet via the editor
-		return a.editor.View()
-	}
+func (a *App) View() string {
 	return a.editor.View()
 }
