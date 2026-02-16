@@ -1,6 +1,7 @@
 package app
 
 import (
+	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -183,8 +184,45 @@ func (a *App) ToggleFinder() {
 	}
 }
 
-// Stub methods for actions not yet implemented
-func (a *App) CreateDailyNote() {}
-func (a *App) CreateInboxNote() {}
-func (a *App) InsertTemplate()  {}
-func (a *App) FormatDocument()  {}
+func (a *App) CreateDailyNote() {
+	path, err := a.vault.CreateDailyNote()
+	if err != nil {
+		return
+	}
+	a.editor.OpenFile(path)
+	rel, _ := filepath.Rel(a.cfg.VaultPath, path)
+	a.status.SetFile(rel)
+	a.tree.Refresh()
+}
+
+func (a *App) CreateInboxNote() {
+	path, err := a.vault.CreateInboxNote()
+	if err != nil {
+		return
+	}
+	a.editor.OpenFile(path)
+	rel, _ := filepath.Rel(a.cfg.VaultPath, path)
+	a.status.SetFile(rel)
+	a.tree.Refresh()
+}
+
+func (a *App) InsertTemplate() {
+	templates, err := a.vault.LoadTemplates()
+	if err != nil || len(templates) == 0 {
+		return
+	}
+	// For now, use the first template. A template picker UI can be added later.
+	if len(templates) > 0 {
+		path, err := a.vault.CreateFromTemplate(templates[0], "New Note")
+		if err != nil {
+			return
+		}
+		a.editor.OpenFile(path)
+		rel, _ := filepath.Rel(a.cfg.VaultPath, path)
+		a.status.SetFile(rel)
+		a.tree.Refresh()
+	}
+}
+
+// Stub for M8
+func (a *App) FormatDocument() {}
