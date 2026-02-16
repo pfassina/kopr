@@ -1,10 +1,10 @@
 package app
 
 import (
-	"github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/yourusername/vimvault/internal/config"
+	"github.com/yourusername/vimvault/internal/editor"
 )
 
 type focusedPanel int
@@ -17,6 +17,7 @@ const (
 
 type App struct {
 	cfg     config.Config
+	editor  editor.Editor
 	width   int
 	height  int
 	focused focusedPanel
@@ -26,47 +27,35 @@ type App struct {
 func New(cfg config.Config) App {
 	return App{
 		cfg:     cfg,
+		editor:  editor.New(cfg.VaultPath),
 		focused: focusEditor,
 	}
 }
 
 func (a App) Init() tea.Cmd {
-	return nil
+	return a.editor.Init()
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c":
+		if msg.String() == "ctrl+c" {
+			a.editor.Close()
 			return a, tea.Quit
 		}
-
-	case tea.WindowSizeMsg:
-		a.width = msg.Width
-		a.height = msg.Height
-		a.ready = true
 	}
 
-	return a, nil
+	// Forward all messages to the editor
+	var cmd tea.Cmd
+	a.editor, cmd = a.editor.Update(msg)
+
+	return a, cmd
 }
 
 func (a App) View() string {
 	if !a.ready {
-		return "Loading..."
+		// Check if we got a size yet via the editor
+		return a.editor.View()
 	}
-
-	placeholder := lipgloss.Place(
-		a.width, a.height,
-		lipgloss.Center, lipgloss.Center,
-		lipgloss.NewStyle().
-			Foreground(lipgloss.Color("212")).
-			Bold(true).
-			Render("VimVault")+"\n"+
-			lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245")).
-				Render("Terminal-first knowledge management"),
-	)
-
-	return placeholder
+	return a.editor.View()
 }
