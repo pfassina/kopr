@@ -1,12 +1,16 @@
 package app
 
 import (
+	"bytes"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/yourusername/vimvault/internal/editor"
+	"github.com/yourusername/vimvault/internal/markdown"
 )
 
 // Binding represents a leader key binding.
@@ -224,5 +228,46 @@ func (a *App) InsertTemplate() {
 	}
 }
 
-// Stub for M8
-func (a *App) FormatDocument() {}
+func (a *App) FormatDocument() {
+	rpc := a.editor.GetRPC()
+	if rpc == nil {
+		return
+	}
+
+	// Get current buffer content
+	content, err := rpc.BufferContent()
+	if err != nil {
+		return
+	}
+
+	// Join lines
+	var buf bytes.Buffer
+	for i, line := range content {
+		buf.Write(line)
+		if i < len(content)-1 {
+			buf.WriteByte('\n')
+		}
+	}
+
+	// Format
+	formatted := markdown.Format(buf.Bytes())
+
+	// Write back via RPC - use Neovim's command to replace buffer
+	lines := strings.Split(string(formatted), "\n")
+	// Remove trailing empty line added by Format()
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	// Build a Lua command to set buffer lines
+	luaLines := make([]string, len(lines))
+	for i, l := range lines {
+		// Escape for Lua string
+		l = strings.ReplaceAll(l, "\\", "\\\\")
+		l = strings.ReplaceAll(l, "'", "\\'")
+		luaLines[i] = "'" + l + "'"
+	}
+
+	lua := fmt.Sprintf("vim.api.nvim_buf_set_lines(0, 0, -1, false, {%s})", strings.Join(luaLines, ","))
+	rpc.ExecLua(lua, nil)
+}
