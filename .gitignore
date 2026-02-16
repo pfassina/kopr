@@ -1,0 +1,8 @@
+bin/
+vimvault
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.vimvault/
+result
