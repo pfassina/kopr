@@ -173,8 +173,17 @@ func (a *App) cancelLeader() {
 	a.leader.showHelp = false
 }
 
+func (a *App) ToggleFinder() {
+	if a.finder.Visible() {
+		a.finder.Hide()
+		a.focused = focusEditor
+	} else {
+		a.finder.Show()
+		a.focused = focusFinder
+	}
+}
+
 // Stub methods for actions not yet implemented
-func (a *App) ToggleFinder()    {}
 func (a *App) CreateDailyNote() {}
 func (a *App) CreateInboxNote() {}
 func (a *App) InsertTemplate()  {}

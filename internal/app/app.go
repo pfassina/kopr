@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/yourusername/vimvault/internal/config"
 	"github.com/yourusername/vimvault/internal/editor"
+	"github.com/yourusername/vimvault/internal/index"
 	"github.com/yourusername/vimvault/internal/panel"
 	"github.com/yourusername/vimvault/internal/vault"
 )
@@ -19,6 +21,7 @@ const (
 	focusEditor focusedPanel = iota
 	focusTree
 	focusInfo
+	focusFinder
 )
 
 type App struct {
@@ -28,7 +31,11 @@ type App struct {
 	info     panel.Info
 	status   panel.Status
 	whichKey panel.WhichKey
+	finder   panel.Finder
 	vault    *vault.Vault
+	db       *index.DB
+	indexer  *index.Indexer
+	watcher  *index.Watcher
 	width    int
 	height   int
 	focused  focusedPanel
@@ -46,6 +53,8 @@ func New(cfg config.Config) App {
 	t := panel.NewTree(v)
 	t.Refresh()
 
+	f := panel.NewFinder()
+
 	a := App{
 		cfg:      cfg,
 		editor:   editor.New(cfg.VaultPath),
@@ -53,12 +62,24 @@ func New(cfg config.Config) App {
 		info:     panel.NewInfo(),
 		status:   panel.NewStatus(cfg.VaultPath),
 		whichKey: panel.NewWhichKey(),
+		finder:   f,
 		vault:    v,
 		focused:  focusEditor,
 		showTree: cfg.ShowTree,
 		showInfo: cfg.ShowInfo,
 	}
 	a.initLeader()
+
+	// Initialize index
+	dbPath := filepath.Join(cfg.VaultPath, ".vimvault", "index.db")
+	ensureDir(filepath.Dir(dbPath))
+	db, err := index.Open(dbPath)
+	if err == nil {
+		a.db = db
+		a.indexer = index.NewIndexer(db, cfg.VaultPath)
+		a.finder.SetSearchFunc(a.searchNotes)
+	}
+
 	return a
 }
 
@@ -67,18 +88,29 @@ func (a *App) SetProgram(p *tea.Program) {
 }
 
 func (a *App) Init() tea.Cmd {
-	return a.editor.Init()
+	cmds := []tea.Cmd{a.editor.Init()}
+	if a.indexer != nil {
+		cmds = append(cmds, a.initIndex())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
-			a.editor.Close()
+			a.Close()
 			return a, tea.Quit
 		}
 
-		// Try leader key system first
+		// Finder takes priority when visible
+		if a.finder.Visible() {
+			var cmd tea.Cmd
+			a.finder, cmd = a.finder.Update(msg)
+			return a, cmd
+		}
+
+		// Try leader key system
 		if consumed, cmd := a.handleLeaderKey(msg.String()); consumed {
 			a.updateWhichKey()
 			return a, cmd
@@ -92,11 +124,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
+		a.finder.SetSize(msg.Width, msg.Height)
 		a.updateLayout()
 
 	case editor.ModeChangedMsg:
 		a.status.SetMode(modeDisplayName(msg.Mode))
-		// Cancel leader if mode changes
 		if msg.Mode != editor.ModeNormal {
 			a.cancelLeader()
 			a.updateWhichKey()
@@ -108,6 +140,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status.SetFile(msg.Path)
 		a.focused = focusEditor
 		a.tree.SetFocused(false)
+
+	case panel.FinderResultMsg:
+		a.handleFinderResult(msg.Path)
+		a.focused = focusEditor
+
+	case panel.FinderClosedMsg:
+		a.focused = focusEditor
+
+	case indexInitDoneMsg:
+		// Index is ready - start file watcher
+		if a.indexer != nil {
+			w, err := index.NewWatcher(a.indexer, a.cfg.VaultPath, func() {
+				a.tree.Refresh()
+			})
+			if err == nil {
+				a.watcher = w
+				go w.Start()
+			}
+		}
+		return a, nil
 	}
 
 	// Route key events based on focus
@@ -173,7 +225,7 @@ func (a *App) View() string {
 
 	result := main + "\n" + a.status.View()
 
-	// Overlay which-key popup if active
+	// Overlay which-key popup
 	if a.leader.showHelp {
 		wkView := a.whichKey.View()
 		if wkView != "" {
@@ -181,7 +233,25 @@ func (a *App) View() string {
 		}
 	}
 
+	// Overlay finder
+	if a.finder.Visible() {
+		finderView := a.finder.View()
+		if finderView != "" {
+			result = overlayCenter(result, finderView, a.width, a.height)
+		}
+	}
+
 	return result
+}
+
+func (a *App) Close() {
+	a.editor.Close()
+	if a.watcher != nil {
+		a.watcher.Stop()
+	}
+	if a.db != nil {
+		a.db.Close()
+	}
 }
 
 func (a *App) updateLayout() {
@@ -247,7 +317,6 @@ func modeDisplayName(mode editor.NvimMode) string {
 	return strings.ToUpper(string(mode))
 }
 
-// overlayCenter places an overlay string centered on the base view.
 func overlayCenter(base, overlay string, width, height int) string {
 	baseLines := strings.Split(base, "\n")
 	overlayLines := strings.Split(overlay, "\n")
@@ -278,12 +347,10 @@ func overlayCenter(base, overlay string, width, height int) string {
 		baseLine := baseLines[row]
 		baseRunes := []rune(baseLine)
 
-		// Pad base line if needed
 		for len(baseRunes) < startCol+len([]rune(overlayLine)) {
 			baseRunes = append(baseRunes, ' ')
 		}
 
-		// Replace characters with overlay
 		overlayRunes := []rune(overlayLine)
 		for j, r := range overlayRunes {
 			if startCol+j < len(baseRunes) {
@@ -295,4 +362,8 @@ func overlayCenter(base, overlay string, width, height int) string {
 	}
 
 	return strings.Join(baseLines, "\n")
+}
+
+func ensureDir(path string) {
+	os.MkdirAll(path, 0755)
 }
