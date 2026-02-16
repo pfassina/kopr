@@ -12,6 +12,7 @@ import (
 	"github.com/yourusername/vimvault/internal/editor"
 	"github.com/yourusername/vimvault/internal/index"
 	"github.com/yourusername/vimvault/internal/panel"
+	"github.com/yourusername/vimvault/internal/session"
 	"github.com/yourusername/vimvault/internal/vault"
 )
 
@@ -36,6 +37,8 @@ type App struct {
 	db       *index.DB
 	indexer  *index.Indexer
 	watcher  *index.Watcher
+	store    *session.Store
+	theme    Theme
 	width    int
 	height   int
 	focused  focusedPanel
@@ -54,6 +57,8 @@ func New(cfg config.Config) App {
 	t.Refresh()
 
 	f := panel.NewFinder()
+	store := session.NewStore(cfg.VaultPath)
+	state, _ := store.Load()
 
 	a := App{
 		cfg:      cfg,
@@ -64,9 +69,11 @@ func New(cfg config.Config) App {
 		whichKey: panel.NewWhichKey(),
 		finder:   f,
 		vault:    v,
+		store:    store,
+		theme:    GetTheme(cfg.Theme),
 		focused:  focusEditor,
-		showTree: cfg.ShowTree,
-		showInfo: cfg.ShowInfo,
+		showTree: state.ShowTree,
+		showInfo: state.ShowInfo,
 	}
 	a.initLeader()
 
@@ -246,6 +253,18 @@ func (a *App) View() string {
 }
 
 func (a *App) Close() {
+	// Save session state
+	if a.store != nil {
+		state := session.State{
+			ShowTree:  a.showTree,
+			ShowInfo:  a.showInfo,
+			TreeWidth: a.cfg.TreeWidth,
+			InfoWidth: a.cfg.InfoWidth,
+			Theme:     a.theme.Name,
+		}
+		a.store.Save(state)
+	}
+
 	a.editor.Close()
 	if a.watcher != nil {
 		a.watcher.Stop()
