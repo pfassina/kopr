@@ -27,6 +27,7 @@ type App struct {
 	tree     panel.Tree
 	info     panel.Info
 	status   panel.Status
+	whichKey panel.WhichKey
 	vault    *vault.Vault
 	width    int
 	height   int
@@ -34,6 +35,10 @@ type App struct {
 	showTree bool
 	showInfo bool
 	zenMode  bool
+
+	// Leader key system
+	bindings map[string]*Binding
+	leader   LeaderState
 }
 
 func New(cfg config.Config) App {
@@ -41,17 +46,20 @@ func New(cfg config.Config) App {
 	t := panel.NewTree(v)
 	t.Refresh()
 
-	return App{
+	a := App{
 		cfg:      cfg,
 		editor:   editor.New(cfg.VaultPath),
 		tree:     t,
 		info:     panel.NewInfo(),
 		status:   panel.NewStatus(cfg.VaultPath),
+		whichKey: panel.NewWhichKey(),
 		vault:    v,
 		focused:  focusEditor,
 		showTree: cfg.ShowTree,
 		showInfo: cfg.ShowInfo,
 	}
+	a.initLeader()
+	return a
 }
 
 func (a *App) SetProgram(p *tea.Program) {
@@ -70,6 +78,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 
+		// Try leader key system first
+		if consumed, cmd := a.handleLeaderKey(msg.String()); consumed {
+			a.updateWhichKey()
+			return a, cmd
+		}
+
+	case leaderTimeoutMsg:
+		a.handleLeaderTimeout()
+		a.updateWhichKey()
+		return a, nil
+
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
@@ -77,6 +96,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case editor.ModeChangedMsg:
 		a.status.SetMode(modeDisplayName(msg.Mode))
+		// Cancel leader if mode changes
+		if msg.Mode != editor.ModeNormal {
+			a.cancelLeader()
+			a.updateWhichKey()
+		}
 
 	case panel.FileSelectedMsg:
 		fullPath := filepath.Join(a.cfg.VaultPath, msg.Path)
@@ -114,37 +138,50 @@ func (a *App) View() string {
 
 	editorView := a.editor.View()
 
+	var main string
+
 	if a.zenMode || (!a.showTree && !a.showInfo) {
-		return editorView + "\n" + a.status.View()
-	}
+		main = editorView
+	} else {
+		var columns []string
 
-	var columns []string
+		if a.showTree {
+			borderStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder(), false, true, false, false).
+				BorderForeground(lipgloss.Color("240")).
+				Width(layout.TreeWidth - 1).
+				Height(layout.Height)
+			columns = append(columns, borderStyle.Render(a.tree.View()))
+		}
 
-	if a.showTree {
-		borderStyle := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder(), false, true, false, false).
-			BorderForeground(lipgloss.Color("240")).
-			Width(layout.TreeWidth - 1).
+		editorStyle := lipgloss.NewStyle().
+			Width(layout.EditorWidth).
 			Height(layout.Height)
-		columns = append(columns, borderStyle.Render(a.tree.View()))
+		columns = append(columns, editorStyle.Render(editorView))
+
+		if a.showInfo {
+			borderStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder(), false, false, false, true).
+				BorderForeground(lipgloss.Color("240")).
+				Width(layout.InfoWidth - 1).
+				Height(layout.Height)
+			columns = append(columns, borderStyle.Render(a.info.View()))
+		}
+
+		main = lipgloss.JoinHorizontal(lipgloss.Top, columns...)
 	}
 
-	editorStyle := lipgloss.NewStyle().
-		Width(layout.EditorWidth).
-		Height(layout.Height)
-	columns = append(columns, editorStyle.Render(editorView))
+	result := main + "\n" + a.status.View()
 
-	if a.showInfo {
-		borderStyle := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder(), false, false, false, true).
-			BorderForeground(lipgloss.Color("240")).
-			Width(layout.InfoWidth - 1).
-			Height(layout.Height)
-		columns = append(columns, borderStyle.Render(a.info.View()))
+	// Overlay which-key popup if active
+	if a.leader.showHelp {
+		wkView := a.whichKey.View()
+		if wkView != "" {
+			result = overlayCenter(result, wkView, a.width, a.height)
+		}
 	}
 
-	main := lipgloss.JoinHorizontal(lipgloss.Top, columns...)
-	return main + "\n" + a.status.View()
+	return result
 }
 
 func (a *App) updateLayout() {
@@ -153,13 +190,29 @@ func (a *App) updateLayout() {
 	a.tree.SetSize(layout.TreeWidth, layout.Height)
 	a.info.SetSize(layout.InfoWidth, layout.Height)
 	a.status.SetWidth(a.width)
+	a.whichKey.SetWidth(a.width / 2)
 
-	// Resize editor to its allocated space
 	editorSize := tea.WindowSizeMsg{
 		Width:  layout.EditorWidth,
 		Height: layout.Height,
 	}
 	a.editor, _ = a.editor.Update(editorSize)
+}
+
+func (a *App) updateWhichKey() {
+	if !a.leader.showHelp || a.leader.node == nil {
+		a.whichKey.Clear()
+		return
+	}
+
+	var entries []panel.WhichKeyEntry
+	for _, b := range a.leader.node {
+		entries = append(entries, panel.WhichKeyEntry{
+			Key:   b.Key,
+			Label: b.Label,
+		})
+	}
+	a.whichKey.SetEntries(a.leader.keys, entries)
 }
 
 func (a *App) ToggleTree() {
@@ -192,4 +245,54 @@ func modeDisplayName(mode editor.NvimMode) string {
 		return n
 	}
 	return strings.ToUpper(string(mode))
+}
+
+// overlayCenter places an overlay string centered on the base view.
+func overlayCenter(base, overlay string, width, height int) string {
+	baseLines := strings.Split(base, "\n")
+	overlayLines := strings.Split(overlay, "\n")
+
+	overlayWidth := 0
+	for _, line := range overlayLines {
+		w := lipgloss.Width(line)
+		if w > overlayWidth {
+			overlayWidth = w
+		}
+	}
+
+	startRow := (height - len(overlayLines)) / 2
+	startCol := (width - overlayWidth) / 2
+
+	if startRow < 0 {
+		startRow = 0
+	}
+	if startCol < 0 {
+		startCol = 0
+	}
+
+	for i, overlayLine := range overlayLines {
+		row := startRow + i
+		if row >= len(baseLines) {
+			break
+		}
+		baseLine := baseLines[row]
+		baseRunes := []rune(baseLine)
+
+		// Pad base line if needed
+		for len(baseRunes) < startCol+len([]rune(overlayLine)) {
+			baseRunes = append(baseRunes, ' ')
+		}
+
+		// Replace characters with overlay
+		overlayRunes := []rune(overlayLine)
+		for j, r := range overlayRunes {
+			if startCol+j < len(baseRunes) {
+				baseRunes[startCol+j] = r
+			}
+		}
+
+		baseLines[row] = string(baseRunes)
+	}
+
+	return strings.Join(baseLines, "\n")
 }
