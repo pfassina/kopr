@@ -121,11 +121,15 @@ func (idx *Indexer) IndexFile(absPath string) error {
 		idx.db.InsertHeading(noteID, h.Level, h.Text, h.Line)
 	}
 
-	// Update links
+	// Update links (resolve targets to file paths)
 	idx.db.ClearNoteLinks(noteID)
 	for _, link := range parsed.WikiLinks {
-		idx.db.InsertLink(noteID, link.Target, link.Section, link.Alias, link.Line, link.Col)
+		targetPath := markdown.ResolveWikiLinkTarget(link.Target)
+		idx.db.InsertLink(noteID, targetPath, link.Section, link.Alias, link.Line, link.Col)
 	}
+
+	// Resolve link target IDs
+	idx.resolveLinks(noteID)
 
 	return nil
 }
@@ -147,6 +151,15 @@ func titleFromPath(path string) string {
 	name = strings.ReplaceAll(name, "-", " ")
 	name = strings.ReplaceAll(name, "_", " ")
 	return name
+}
+
+// resolveLinks attempts to set target_id for links whose target_path matches a known note.
+func (idx *Indexer) resolveLinks(sourceID int64) {
+	idx.db.Conn().Exec(`
+		UPDATE links SET target_id = (
+			SELECT id FROM notes WHERE path = links.target_path
+		) WHERE source_id = ? AND target_id IS NULL
+	`, sourceID)
 }
 
 func slugify(title string) string {

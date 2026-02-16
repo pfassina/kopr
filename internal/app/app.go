@@ -140,6 +140,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status.SetFile(msg.Path)
 		a.focused = focusEditor
 		a.tree.SetFocused(false)
+		a.updateBacklinks(msg.Path)
 
 	case panel.FinderResultMsg:
 		a.handleFinderResult(msg.Path)

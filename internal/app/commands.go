@@ -68,5 +68,29 @@ func (a *App) handleFinderResult(path string) tea.Cmd {
 	a.editor.OpenFile(fullPath)
 	a.status.SetFile(path)
 	a.focused = focusEditor
+	a.updateBacklinks(path)
 	return nil
+}
+
+// updateBacklinks refreshes the backlinks panel for the given note path.
+func (a *App) updateBacklinks(relPath string) {
+	if a.db == nil {
+		return
+	}
+
+	backlinks, err := a.db.GetBacklinks(relPath)
+	if err != nil || len(backlinks) == 0 {
+		a.info.SetBacklinks(nil)
+		return
+	}
+
+	lines := make([]string, len(backlinks))
+	for i, bl := range backlinks {
+		title := bl.SourceTitle
+		if title == "" {
+			title = bl.SourcePath
+		}
+		lines[i] = title
+	}
+	a.info.SetBacklinks(lines)
 }
