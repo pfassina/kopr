@@ -78,6 +78,11 @@ func (a *App) createNoteFromFinder(name string) {
 		relPath += ".md"
 	}
 
+	if msg := a.checkUniqueBasename(relPath); msg != "" {
+		a.status.SetError(msg)
+		return
+	}
+
 	content := fmt.Sprintf("---\ntitle: %s\n---\n\n", name)
 	fullPath, err := a.vault.CreateNote(relPath, content)
 	if err != nil {

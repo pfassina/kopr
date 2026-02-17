@@ -27,6 +27,11 @@ func NewIndexer(db *DB, vaultRoot string) *Indexer {
 
 // IndexAll performs a full index of all markdown files in the vault.
 func (idx *Indexer) IndexAll() error {
+	// Clear links and hashes so all files get fully re-indexed.
+	// Links are derived data rebuilt from source on each IndexFile call.
+	idx.db.Conn().Exec("DELETE FROM links")
+	idx.db.Conn().Exec("UPDATE notes SET hash = ''")
+
 	return filepath.Walk(idx.vaultRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -121,10 +126,11 @@ func (idx *Indexer) IndexFile(absPath string) error {
 		idx.db.InsertHeading(noteID, h.Level, h.Text, h.Line)
 	}
 
-	// Update links (resolve targets to file paths)
+	// Update links (store basenames for name-based resolution)
 	idx.db.ClearNoteLinks(noteID)
 	for _, link := range parsed.WikiLinks {
 		targetPath := markdown.ResolveWikiLinkTarget(link.Target)
+		targetPath = filepath.Base(targetPath) // store only basename
 		idx.db.InsertLink(noteID, targetPath, link.Section, link.Alias, link.Line, link.Col)
 	}
 
@@ -153,11 +159,11 @@ func titleFromPath(path string) string {
 	return name
 }
 
-// resolveLinks attempts to set target_id for links whose target_path matches a known note.
+// resolveLinks attempts to set target_id for links whose target_path (basename) matches a known note.
 func (idx *Indexer) resolveLinks(sourceID int64) {
 	idx.db.Conn().Exec(`
 		UPDATE links SET target_id = (
-			SELECT id FROM notes WHERE path = links.target_path
+			SELECT id FROM notes WHERE path = links.target_path OR path LIKE '%/' || links.target_path
 		) WHERE source_id = ? AND target_id IS NULL
 	`, sourceID)
 }

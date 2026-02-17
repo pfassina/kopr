@@ -104,7 +104,7 @@ func (r *RPC) Mode() NvimMode {
 
 // OpenFile opens a file in Neovim.
 func (r *RPC) OpenFile(path string) error {
-	return r.client.Command("edit " + path)
+	return r.client.ExecLua("vim.cmd('edit ' .. vim.fn.fnameescape(...))", nil, path)
 }
 
 // CurrentFile returns the current buffer's file path.

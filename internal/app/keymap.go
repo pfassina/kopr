@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/pfassina/kopr/internal/config"
 	"github.com/pfassina/kopr/internal/editor"
 	"github.com/pfassina/kopr/internal/markdown"
 )
@@ -120,6 +121,15 @@ func newBindings() map[string]*Binding {
 			Children: map[string]*Binding{
 				"f": {Key: "f", Label: "Format document", Action: func(a *App) tea.Cmd {
 					a.FormatDocument()
+					return nil
+				}},
+			},
+		},
+		"c": {
+			Key: "c", Label: "+config",
+			Children: map[string]*Binding{
+				"r": {Key: "r", Label: "Reload config", Action: func(a *App) tea.Cmd {
+					a.ReloadConfig()
 					return nil
 				}},
 			},
@@ -292,11 +302,26 @@ func (a *App) FollowLink() {
 		return
 	}
 
-	// Resolve the link target to a file path
-	targetPath := markdown.ResolveWikiLinkTarget(link.Target)
+	// Resolve the link target — try DB lookup by basename first
+	basename := filepath.Base(markdown.ResolveWikiLinkTarget(link.Target))
+	targetPath := ""
+	if a.db != nil {
+		resolved, _ := a.db.FindNoteByBasename(basename)
+		if resolved != "" {
+			targetPath = resolved
+		}
+	}
+	// Fallback: use basename as root-level path
+	if targetPath == "" {
+		targetPath = basename
+	}
 
 	// Create the target note if it doesn't exist
 	if _, err := os.Stat(filepath.Join(a.cfg.VaultPath, targetPath)); err != nil {
+		if msg := a.checkUniqueBasename(targetPath); msg != "" {
+			a.status.SetError(msg)
+			return
+		}
 		frontmatter := fmt.Sprintf("---\ntitle: %s\n---\n\n", link.Target)
 		if _, err := a.vault.CreateNote(targetPath, frontmatter); err != nil {
 			return
@@ -325,6 +350,22 @@ func (a *App) GoBack() {
 	a.currentFile = "" // prevent navigateTo from overwriting prevFile
 	a.navigateTo(target)
 	a.setFocus(focusEditor)
+}
+
+func (a *App) ReloadConfig() {
+	// Reload TOML config
+	cfg := config.Default()
+	if _, err := config.LoadFile(&cfg); err == nil {
+		a.cfg.Theme = cfg.Theme
+		a.cfg.LeaderTimeout = cfg.LeaderTimeout
+		a.theme = GetTheme(cfg.Theme)
+	}
+
+	// Reload Neovim config
+	rpc := a.editor.GetRPC()
+	if rpc != nil {
+		rpc.ExecLua("dofile(vim.fn.stdpath('config') .. '/init.lua')", nil)
+	}
 }
 
 func (a *App) FormatDocument() {

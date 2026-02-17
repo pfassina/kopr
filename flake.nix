@@ -24,6 +24,7 @@
 
           shellHook = ''
             export CGO_ENABLED=0
+            export PATH="$PWD/bin:$PATH"
             echo "Kopr dev shell ready"
           '';
         };

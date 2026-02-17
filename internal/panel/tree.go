@@ -11,6 +11,21 @@ import (
 	"github.com/pfassina/kopr/internal/vault"
 )
 
+// ClipboardOp represents a pending clipboard operation.
+type ClipboardOp int
+
+const (
+	ClipboardNone ClipboardOp = iota
+	ClipboardCopy
+	ClipboardCut
+)
+
+// Clipboard holds files staged for a paste operation.
+type Clipboard struct {
+	Op    ClipboardOp
+	Paths []string
+}
+
 // FileSelectedMsg is sent when a file is selected in the tree.
 type FileSelectedMsg struct {
 	Path string
@@ -19,10 +34,15 @@ type FileSelectedMsg struct {
 // TreeNewNoteMsg is sent when the user presses 'a' to add a note.
 type TreeNewNoteMsg struct{}
 
-// TreeDeleteNoteMsg is sent when the user presses 'd' to delete a note.
+// TreeDeleteNoteMsg is sent when the user presses 'd' to delete a single note.
 type TreeDeleteNoteMsg struct {
 	Path string
 	Name string
+}
+
+// TreeDeleteNotesMsg is sent when deleting multiple selected notes.
+type TreeDeleteNotesMsg struct {
+	Paths []string
 }
 
 // TreeRenameNoteMsg is sent when the user presses 'r' to rename a note.
@@ -31,10 +51,17 @@ type TreeRenameNoteMsg struct {
 	Name string
 }
 
-// TreeMoveNoteMsg is sent when the user presses 'm' to move a note.
-type TreeMoveNoteMsg struct {
-	Path string
-	Name string
+// TreePasteMsg is sent when the user presses 'p' to paste.
+type TreePasteMsg struct {
+	Op      ClipboardOp
+	Sources []string
+	DestDir string
+}
+
+// TreeClipboardChangedMsg notifies the app that clipboard state changed.
+type TreeClipboardChangedMsg struct {
+	Op    ClipboardOp
+	Count int
 }
 
 // Tree is the file tree panel.
@@ -43,18 +70,23 @@ type Tree struct {
 	allEntries []vault.Entry
 	entries    []vault.Entry
 	collapsed  map[string]bool
+	selected   map[string]bool
+	clipboard  Clipboard
 	cursor     int
 	offset     int
 	width      int
 	height     int
 	focused    bool
 	showHelp   bool
+	accent     lipgloss.Color
 }
 
 func NewTree(v *vault.Vault) Tree {
 	return Tree{
 		vault:     v,
 		collapsed: make(map[string]bool),
+		selected:  make(map[string]bool),
+		accent:    lipgloss.Color("212"),
 	}
 }
 
@@ -62,6 +94,7 @@ func (t *Tree) Refresh() {
 	entries, _ := t.vault.ListEntries()
 	t.allEntries = entries
 	t.rebuildVisible()
+	t.pruneStale()
 }
 
 // rebuildVisible filters allEntries based on collapsed state.
@@ -82,6 +115,33 @@ func (t *Tree) rebuildVisible() {
 	}
 }
 
+// pruneStale removes selected/clipboard entries that no longer exist.
+func (t *Tree) pruneStale() {
+	exists := make(map[string]bool, len(t.allEntries))
+	for _, e := range t.allEntries {
+		exists[e.Path] = true
+	}
+
+	for p := range t.selected {
+		if !exists[p] {
+			delete(t.selected, p)
+		}
+	}
+
+	if t.clipboard.Op != ClipboardNone {
+		valid := t.clipboard.Paths[:0]
+		for _, p := range t.clipboard.Paths {
+			if exists[p] {
+				valid = append(valid, p)
+			}
+		}
+		t.clipboard.Paths = valid
+		if len(valid) == 0 {
+			t.clipboard = Clipboard{}
+		}
+	}
+}
+
 // isHiddenByCollapse checks if any ancestor directory of path is collapsed.
 func (t *Tree) isHiddenByCollapse(path string) bool {
 	dir := filepath.Dir(path)
@@ -92,6 +152,60 @@ func (t *Tree) isHiddenByCollapse(path string) bool {
 		dir = filepath.Dir(dir)
 	}
 	return false
+}
+
+// collectTargets returns selected file paths, or the cursor file if none selected.
+func (t *Tree) collectTargets() []string {
+	if len(t.selected) > 0 {
+		paths := make([]string, 0, len(t.selected))
+		for p := range t.selected {
+			paths = append(paths, p)
+		}
+		return paths
+	}
+	if t.cursor < len(t.entries) {
+		entry := t.entries[t.cursor]
+		if !entry.IsDir {
+			return []string{entry.Path}
+		}
+	}
+	return nil
+}
+
+// resolveDestDir returns the directory to paste into based on cursor position.
+func (t *Tree) resolveDestDir() string {
+	if t.cursor >= len(t.entries) {
+		return "."
+	}
+	entry := t.entries[t.cursor]
+	if entry.IsDir {
+		return entry.Path
+	}
+	dir := filepath.Dir(entry.Path)
+	if dir == "." {
+		return ""
+	}
+	return dir
+}
+
+// ClearClipboard resets clipboard state.
+func (t *Tree) ClearClipboard() {
+	t.clipboard = Clipboard{}
+}
+
+// ClearSelected resets selection state.
+func (t *Tree) ClearSelected() {
+	t.selected = make(map[string]bool)
+}
+
+// ClipboardInfo returns the current clipboard operation and count.
+func (t *Tree) ClipboardInfo() (ClipboardOp, int) {
+	return t.clipboard.Op, len(t.clipboard.Paths)
+}
+
+// SetAccent sets the accent color used for highlights.
+func (t *Tree) SetAccent(c lipgloss.Color) {
+	t.accent = c
 }
 
 func (t Tree) Init() tea.Cmd {
@@ -151,13 +265,67 @@ func (t Tree) Update(msg tea.Msg) (Tree, tea.Cmd) {
 			t.offset = 0
 		case "a":
 			return t, func() tea.Msg { return TreeNewNoteMsg{} }
-		case "d":
+		case "v":
 			if t.cursor < len(t.entries) {
 				entry := t.entries[t.cursor]
 				if !entry.IsDir {
-					return t, func() tea.Msg {
-						return TreeDeleteNoteMsg{Path: entry.Path, Name: entry.Name}
+					if t.selected[entry.Path] {
+						delete(t.selected, entry.Path)
+					} else {
+						t.selected[entry.Path] = true
 					}
+				}
+			}
+		case "V":
+			t.selected = make(map[string]bool)
+			t.clipboard = Clipboard{}
+			return t, func() tea.Msg {
+				return TreeClipboardChangedMsg{Op: ClipboardNone, Count: 0}
+			}
+		case "y":
+			targets := t.collectTargets()
+			if len(targets) > 0 {
+				t.clipboard = Clipboard{Op: ClipboardCopy, Paths: targets}
+				t.selected = make(map[string]bool)
+				op, count := t.clipboard.Op, len(t.clipboard.Paths)
+				return t, func() tea.Msg {
+					return TreeClipboardChangedMsg{Op: op, Count: count}
+				}
+			}
+		case "x":
+			targets := t.collectTargets()
+			if len(targets) > 0 {
+				t.clipboard = Clipboard{Op: ClipboardCut, Paths: targets}
+				t.selected = make(map[string]bool)
+				op, count := t.clipboard.Op, len(t.clipboard.Paths)
+				return t, func() tea.Msg {
+					return TreeClipboardChangedMsg{Op: op, Count: count}
+				}
+			}
+		case "p":
+			if t.clipboard.Op == ClipboardNone || len(t.clipboard.Paths) == 0 {
+				return t, nil
+			}
+			destDir := t.resolveDestDir()
+			pasteMsg := TreePasteMsg{
+				Op:      t.clipboard.Op,
+				Sources: append([]string(nil), t.clipboard.Paths...),
+				DestDir: destDir,
+			}
+			t.clipboard = Clipboard{}
+			return t, func() tea.Msg { return pasteMsg }
+		case "d":
+			targets := t.collectTargets()
+			if len(targets) == 1 {
+				name := filepath.Base(targets[0])
+				path := targets[0]
+				return t, func() tea.Msg {
+					return TreeDeleteNoteMsg{Path: path, Name: name}
+				}
+			} else if len(targets) > 1 {
+				paths := append([]string(nil), targets...)
+				return t, func() tea.Msg {
+					return TreeDeleteNotesMsg{Paths: paths}
 				}
 			}
 		case "r":
@@ -166,15 +334,6 @@ func (t Tree) Update(msg tea.Msg) (Tree, tea.Cmd) {
 				if !entry.IsDir {
 					return t, func() tea.Msg {
 						return TreeRenameNoteMsg{Path: entry.Path, Name: entry.Name}
-					}
-				}
-			}
-		case "m":
-			if t.cursor < len(t.entries) {
-				entry := t.entries[t.cursor]
-				if !entry.IsDir {
-					return t, func() tea.Msg {
-						return TreeMoveNoteMsg{Path: entry.Path, Name: entry.Name}
 					}
 				}
 			}
@@ -191,11 +350,13 @@ func (t Tree) View() string {
 		return ""
 	}
 
+	accentColor := t.accent
+
 	var titleStyle lipgloss.Style
 	if t.focused {
 		titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("212")).
+			Foreground(accentColor).
 			Underline(true).
 			Padding(0, 1)
 	} else {
@@ -235,44 +396,64 @@ func (t Tree) View() string {
 	// Reserve space for help if showing
 	helpLines := 0
 	if t.showHelp {
-		helpLines = 11 // help box height
+		helpLines = 14 // help box height
 		viewHeight -= helpLines
 		if viewHeight < 0 {
 			viewHeight = 0
 		}
 	}
 
+	markerSelected := lipgloss.NewStyle().Foreground(accentColor).Render("\u258e")
+	markerYanked := lipgloss.NewStyle().Foreground(accentColor).Render("\u258e")
+	markerCut := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("\u258e")
+
 	for i := t.offset; i < len(t.entries) && i-t.offset < viewHeight; i++ {
 		entry := t.entries[i]
+
+		// Marker column
+		marker := " "
+		if !entry.IsDir {
+			if t.selected[entry.Path] {
+				marker = markerSelected
+			} else if t.isInClipboard(entry.Path) {
+				if t.clipboard.Op == ClipboardCopy {
+					marker = markerYanked
+				} else {
+					marker = markerCut
+				}
+			}
+		}
+
 		indent := strings.Repeat("  ", entry.Depth)
 		icon := "  "
 		if entry.IsDir {
 			if t.collapsed[entry.Path] {
-				icon = "▸ "
+				icon = "\u25b8 "
 			} else {
-				icon = "▾ "
+				icon = "\u25be "
 			}
 		}
 
 		line := fmt.Sprintf("%s%s%s", indent, icon, entry.Name)
 
-		// Truncate to width
-		if len(line) > t.width-2 {
-			line = line[:t.width-5] + "..."
+		// Truncate to width (account for marker column)
+		maxLineWidth := t.width - 3
+		if len(line) > maxLineWidth {
+			line = line[:maxLineWidth-3] + "..."
 		}
 
 		// Pad to width
-		if len(line) < t.width-2 {
-			line += strings.Repeat(" ", t.width-2-len(line))
+		if len(line) < maxLineWidth {
+			line += strings.Repeat(" ", maxLineWidth-len(line))
 		}
 
 		if i == t.cursor && t.focused {
 			style := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("212")).
+				Foreground(accentColor).
 				Bold(true)
-			b.WriteString(style.Render(line))
+			b.WriteString(marker + style.Render(line))
 		} else {
-			b.WriteString(line)
+			b.WriteString(marker + line)
 		}
 		b.WriteByte('\n')
 	}
@@ -284,9 +465,19 @@ func (t Tree) View() string {
 	return b.String()
 }
 
+// isInClipboard checks if a path is in the clipboard.
+func (t Tree) isInClipboard(path string) bool {
+	for _, p := range t.clipboard.Paths {
+		if p == path {
+			return true
+		}
+	}
+	return false
+}
+
 func (t Tree) renderHelp() string {
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	key := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	key := lipgloss.NewStyle().Foreground(t.accent).Bold(true)
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("240")).
@@ -297,9 +488,13 @@ func (t Tree) renderHelp() string {
 		{"j/k", "Navigate"},
 		{"enter", "Open / Toggle dir"},
 		{"a", "New note or dir"},
-		{"d", "Delete note"},
+		{"v", "Toggle select"},
+		{"V", "Clear selections"},
+		{"y", "Yank (copy)"},
+		{"x", "Cut (move)"},
+		{"p", "Paste"},
+		{"d", "Delete"},
 		{"r", "Rename note"},
-		{"m", "Move note"},
 		{"g/G", "Top / Bottom"},
 		{"?", "Toggle help"},
 	}
