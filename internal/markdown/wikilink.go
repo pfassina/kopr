@@ -15,6 +15,32 @@ type WikiLink struct {
 	Col     int    // 0-based column
 }
 
+// WikiLinkAt returns the wiki link at the given cursor position, or nil if none.
+// Line is 1-based, col is 0-based (matching Neovim's cursor position).
+func WikiLinkAt(links []WikiLink, line, col int) *WikiLink {
+	for i := range links {
+		l := &links[i]
+		if l.Line != line {
+			continue
+		}
+
+		// Compute the end column: [[ + inner content + ]]
+		inner := l.Target
+		if l.Section != "" {
+			inner += "#" + l.Section
+		}
+		if l.Alias != "" {
+			inner += "|" + l.Alias
+		}
+		endCol := l.Col + 2 + len(inner) + 2 // [[ + inner + ]]
+
+		if col >= l.Col && col < endCol {
+			return l
+		}
+	}
+	return nil
+}
+
 // ExtractWikiLinks finds all [[wiki links]] in markdown content.
 // Supports [[note]], [[note#section]], [[note|alias]], [[note#section|alias]].
 func ExtractWikiLinks(content []byte) []WikiLink {

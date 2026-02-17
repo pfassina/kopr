@@ -228,6 +228,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case panel.FinderClosedMsg:
 		a.setFocus(focusEditor)
 
+	case editor.FollowLinkMsg:
+		a.FollowLink()
+		return a, nil
+
 	case editor.NoteClosedMsg:
 		// If prompt is already active, upgrade the pending action to "close"
 		// instead of interrupting (e.g. :wq on unnamed sends both

@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -254,6 +255,64 @@ func (a *App) InsertTemplate() {
 		a.currentFile = rel
 		a.tree.Refresh()
 	}
+}
+
+// FollowLink navigates to the wiki link under the cursor.
+func (a *App) FollowLink() {
+	rpc := a.editor.GetRPC()
+	if rpc == nil {
+		return
+	}
+
+	// Get cursor position (line is 1-based, col is 0-based)
+	line, col, err := rpc.CursorPosition()
+	if err != nil {
+		return
+	}
+
+	// Get buffer content
+	content, err := rpc.BufferContent()
+	if err != nil {
+		return
+	}
+
+	// Join lines into single content block
+	var buf bytes.Buffer
+	for i, l := range content {
+		buf.Write(l)
+		if i < len(content)-1 {
+			buf.WriteByte('\n')
+		}
+	}
+
+	// Find wiki links and check if cursor is on one
+	links := markdown.ExtractWikiLinks(buf.Bytes())
+	link := markdown.WikiLinkAt(links, line, col)
+	if link == nil || link.Target == "" {
+		return
+	}
+
+	// Resolve the link target to a file path
+	targetPath := markdown.ResolveWikiLinkTarget(link.Target)
+
+	// Check if the target note exists
+	fullPath := filepath.Join(a.cfg.VaultPath, targetPath)
+	if _, err := os.Stat(fullPath); err != nil {
+		// Note doesn't exist — create it with frontmatter
+		content := fmt.Sprintf("---\ntitle: %s\n---\n\n", link.Target)
+		created, err := a.vault.CreateNote(targetPath, content)
+		if err != nil {
+			return
+		}
+		fullPath = created
+		a.tree.Refresh()
+	}
+
+	a.openInEditor(fullPath)
+	a.status.SetFile(targetPath)
+	a.currentFile = targetPath
+	a.setFocus(focusEditor)
+	a.updateBacklinks(targetPath)
 }
 
 func (a *App) FormatDocument() {
