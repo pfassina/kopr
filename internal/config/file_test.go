@@ -85,6 +85,7 @@ theme = "nord"
 nvim_mode = "user"
 leader_key = ","
 leader_timeout = 300
+auto_format_on_save = false
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -115,6 +116,9 @@ leader_timeout = 300
 	}
 	if cfg.LeaderTimeout != 300 {
 		t.Errorf("LeaderTimeout = %d, want %d", cfg.LeaderTimeout, 300)
+	}
+	if cfg.AutoFormatOnSave != false {
+		t.Errorf("AutoFormatOnSave = %v, want %v", cfg.AutoFormatOnSave, false)
 	}
 }
 

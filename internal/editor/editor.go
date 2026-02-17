@@ -41,6 +41,12 @@ type NoteClosedMsg struct {
 // SaveUnnamedMsg is sent when :w is used on an unnamed buffer.
 type SaveUnnamedMsg struct{}
 
+// BufferWrittenMsg is sent when Neovim writes a buffer to disk.
+// Path is the absolute path of the written file.
+type BufferWrittenMsg struct {
+	Path string
+}
+
 // FollowLinkMsg is sent when the user presses gf on a wiki link.
 type FollowLinkMsg struct{}
 
@@ -164,6 +170,10 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 		e.rpc = msg.rpc
 		if e.program != nil {
 			if err := e.rpc.SetupQuitSaveIntercept(e.program); err != nil {
+				e.err = err
+				return e, tea.Quit
+			}
+			if err := e.rpc.SetupSaveNotify(e.program); err != nil {
 				e.err = err
 				return e, tea.Quit
 			}

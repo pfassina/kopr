@@ -202,11 +202,52 @@ vim.keymap.set('n', 'ZQ', function()
   vim.rpcnotify(chan, 'kopr:close-note', false)
 end, {noremap=true})
 
--- Intercept :w on unnamed buffers via cnoreabbrev.
+-- Intercept :w/:wq/:x on unnamed buffers via cnoreabbrev.
 -- Uses single quotes in the Vimscript ternary to avoid escaping issues.
-vim.cmd([[cnoreabbrev <expr> w getcmdtype()==':' && getcmdline()=='w' && bufname()=='' ? 'lua vim.rpcnotify(]] .. chan .. [[, "kopr:save-unnamed")' : 'w']])
+vim.cmd([[cnoreabbrev <expr> w  getcmdtype()==':' && getcmdline()=='w'  && bufname()=='' ? 'lua vim.rpcnotify(]] .. chan .. [[, "kopr:save-unnamed")' : 'w']])
+vim.cmd([[cnoreabbrev <expr> wq getcmdtype()==':' && getcmdline()=='wq' && bufname()=='' ? 'lua vim.rpcnotify(]] .. chan .. [[, "kopr:close-note", true)' : 'wq']])
+vim.cmd([[cnoreabbrev <expr> x  getcmdtype()==':' && getcmdline()=='x'  && bufname()=='' ? 'lua vim.rpcnotify(]] .. chan .. [[, "kopr:close-note", true)' : 'x']])
 `, cid)
 
+	return r.client.ExecLua(lua, nil)
+}
+
+// SetupSaveNotify installs an autocmd that notifies Kopr after a buffer is written.
+// Used for features like auto-format-on-save.
+func (r *RPC) SetupSaveNotify(program *tea.Program) error {
+	if err := r.client.RegisterHandler("kopr:buf-written", func(args ...interface{}) {
+		if program == nil {
+			return
+		}
+		if len(args) < 1 {
+			return
+		}
+		path, ok := args[0].(string)
+		if !ok {
+			return
+		}
+		program.Send(BufferWrittenMsg{Path: path})
+	}); err != nil {
+		return err
+	}
+	if err := r.client.Subscribe("kopr:buf-written"); err != nil {
+		return err
+	}
+
+	cid := r.client.ChannelID()
+	lua := fmt.Sprintf(`
+vim.api.nvim_create_augroup('KoprBufWrite', {clear=true})
+vim.api.nvim_create_autocmd('BufWritePost', {
+  group = 'KoprBufWrite',
+  callback = function(args)
+    -- args.file is the absolute path, empty for unnamed buffers.
+    if args == nil or args.file == nil or args.file == '' then
+      return
+    end
+    vim.rpcnotify(%d, 'kopr:buf-written', args.file)
+  end,
+})
+`, cid)
 	return r.client.ExecLua(lua, nil)
 }
 
@@ -219,6 +260,21 @@ func (r *RPC) CursorPosition() (int, int, error) {
 		return 0, 0, err
 	}
 	return pos[0], pos[1], nil
+}
+
+// SetCursorPosition sets the current window cursor position.
+// Line is 1-based, col is 0-based.
+func (r *RPC) SetCursorPosition(line, col int) error {
+	return r.client.ExecLua("vim.api.nvim_win_set_cursor(0, {...})", nil, line, col)
+}
+
+// SetBufferLines replaces the entire contents of the current buffer.
+func (r *RPC) SetBufferLines(lines []string) error {
+	return r.client.ExecLua(`
+local lines = ...
+local buf = vim.api.nvim_get_current_buf()
+vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+`, nil, lines)
 }
 
 // SetupLinkNavigation maps gf/gb in normal mode to send RPC notifications

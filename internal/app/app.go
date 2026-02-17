@@ -12,6 +12,7 @@ import (
 	"github.com/pfassina/kopr/internal/config"
 	"github.com/pfassina/kopr/internal/editor"
 	"github.com/pfassina/kopr/internal/index"
+	"github.com/pfassina/kopr/internal/markdown"
 	"github.com/pfassina/kopr/internal/panel"
 	"github.com/pfassina/kopr/internal/session"
 	"github.com/pfassina/kopr/internal/vault"
@@ -270,6 +271,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.prompt.Show("Save as", "my-note.md")
 		return a, nil
 
+	case editor.BufferWrittenMsg:
+		return a, a.handleBufferWritten(msg.Path)
+
 	case panel.TreeNewNoteMsg:
 		a.pendingPrompt = promptAction{kind: "create-note"}
 		a.prompt.Show("New note", "my-note.md")
@@ -480,6 +484,80 @@ func (a *App) handleNoteClose(save bool) tea.Cmd {
 
 	a.showSplash()
 	return nil
+}
+
+func (a *App) handleBufferWritten(path string) tea.Cmd {
+	if !a.cfg.AutoFormatOnSave {
+		return nil
+	}
+	if !strings.HasSuffix(strings.ToLower(path), ".md") {
+		return nil
+	}
+
+	rpc := a.editor.GetRPC()
+	if rpc == nil {
+		return nil
+	}
+
+	// Only format the currently active file.
+	cur, err := rpc.CurrentFile()
+	if err != nil {
+		return fatalCmd(fmt.Errorf("nvim current file: %w", err))
+	}
+	if cur != path {
+		return nil
+	}
+
+	return func() tea.Msg {
+		// Capture cursor so we can keep the user's position.
+		line, col, err := rpc.CursorPosition()
+		if err != nil {
+			return fatalErrorMsg{err: fmt.Errorf("nvim cursor position: %w", err)}
+		}
+
+		content, err := rpc.BufferContent()
+		if err != nil {
+			return fatalErrorMsg{err: fmt.Errorf("nvim buffer content: %w", err)}
+		}
+
+		var b strings.Builder
+		for i, ln := range content {
+			b.Write(ln)
+			if i < len(content)-1 {
+				b.WriteByte('\n')
+			}
+		}
+
+		formatted := markdown.Format([]byte(b.String()))
+		if string(formatted) == b.String()+"\n" || string(formatted) == b.String() {
+			return nil
+		}
+
+		// Apply formatted text back into the buffer.
+		text := strings.TrimRight(string(formatted), "\n")
+		lines := []string{}
+		if text != "" {
+			lines = strings.Split(text, "\n")
+		}
+		if err := rpc.SetBufferLines(lines); err != nil {
+			return fatalErrorMsg{err: fmt.Errorf("nvim set buffer lines: %w", err)}
+		}
+
+		// Restore cursor (best-effort; clamp line to buffer length).
+		if line < 1 {
+			line = 1
+		}
+		if len(lines) > 0 && line > len(lines) {
+			line = len(lines)
+		}
+		_ = rpc.SetCursorPosition(line, col)
+
+		// Write without triggering autocommands to avoid infinite loops.
+		if err := rpc.ExecCommand("noautocmd write"); err != nil {
+			return fatalErrorMsg{err: fmt.Errorf("nvim write formatted buffer: %w", err)}
+		}
+		return nil
+	}
 }
 
 // showSplash transitions the editor to the splash screen.

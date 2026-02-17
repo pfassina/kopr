@@ -9,3 +9,4 @@ result
 .direnv/
 .envrc
 /vault
+.tmp/
