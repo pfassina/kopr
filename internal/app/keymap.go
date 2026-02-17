@@ -295,27 +295,17 @@ func (a *App) FollowLink() {
 	// Resolve the link target to a file path
 	targetPath := markdown.ResolveWikiLinkTarget(link.Target)
 
-	// Check if the target note exists
-	fullPath := filepath.Join(a.cfg.VaultPath, targetPath)
-	if _, err := os.Stat(fullPath); err != nil {
-		// Note doesn't exist — create it with frontmatter
-		content := fmt.Sprintf("---\ntitle: %s\n---\n\n", link.Target)
-		created, err := a.vault.CreateNote(targetPath, content)
-		if err != nil {
+	// Create the target note if it doesn't exist
+	if _, err := os.Stat(filepath.Join(a.cfg.VaultPath, targetPath)); err != nil {
+		frontmatter := fmt.Sprintf("---\ntitle: %s\n---\n\n", link.Target)
+		if _, err := a.vault.CreateNote(targetPath, frontmatter); err != nil {
 			return
 		}
-		fullPath = created
 		a.tree.Refresh()
 	}
 
-	if a.currentFile != "" && a.currentFile != targetPath {
-		a.prevFile = a.currentFile
-	}
-	a.openInEditor(fullPath)
-	a.status.SetFile(targetPath)
-	a.currentFile = targetPath
+	a.navigateTo(targetPath)
 	a.setFocus(focusEditor)
-	a.updateBacklinks(targetPath)
 }
 
 // GoBack navigates to the previously opened note.
@@ -324,18 +314,17 @@ func (a *App) GoBack() {
 		return
 	}
 
-	fullPath := filepath.Join(a.cfg.VaultPath, a.prevFile)
-	if _, err := os.Stat(fullPath); err != nil {
+	if _, err := os.Stat(filepath.Join(a.cfg.VaultPath, a.prevFile)); err != nil {
 		a.prevFile = ""
 		return
 	}
 
-	// Swap current and previous so gb toggles between two notes
-	a.prevFile, a.currentFile = a.currentFile, a.prevFile
-	a.openInEditor(fullPath)
-	a.status.SetFile(a.currentFile)
+	// Swap so gb toggles between two notes, then navigate
+	target := a.prevFile
+	a.prevFile = a.currentFile
+	a.currentFile = "" // prevent navigateTo from overwriting prevFile
+	a.navigateTo(target)
 	a.setFocus(focusEditor)
-	a.updateBacklinks(a.currentFile)
 }
 
 func (a *App) FormatDocument() {

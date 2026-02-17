@@ -68,6 +68,18 @@ type App struct {
 	prevFile string
 }
 
+// navigateTo opens a note and updates the navigation history.
+func (a *App) navigateTo(relPath string) {
+	if a.currentFile != "" && a.currentFile != relPath {
+		a.prevFile = a.currentFile
+	}
+	fullPath := filepath.Join(a.cfg.VaultPath, relPath)
+	a.openInEditor(fullPath)
+	a.status.SetFile(relPath)
+	a.currentFile = relPath
+	a.updateBacklinks(relPath)
+}
+
 func New(cfg config.Config) App {
 	v := vault.New(cfg.VaultPath)
 	t := panel.NewTree(v)
@@ -213,15 +225,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case panel.FileSelectedMsg:
-		fullPath := filepath.Join(a.cfg.VaultPath, msg.Path)
-		a.openInEditor(fullPath)
-		a.status.SetFile(msg.Path)
-		if a.currentFile != "" && a.currentFile != msg.Path {
-			a.prevFile = a.currentFile
-		}
-		a.currentFile = msg.Path
+		a.navigateTo(msg.Path)
 		a.setFocus(focusEditor)
-		a.updateBacklinks(msg.Path)
 
 	case panel.FinderResultMsg:
 		a.handleFinderResult(msg.Path)

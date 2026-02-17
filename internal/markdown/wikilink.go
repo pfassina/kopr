@@ -8,11 +8,12 @@ import (
 
 // WikiLink represents a parsed [[wiki link]].
 type WikiLink struct {
-	Target  string // note name/path
-	Section string // #section (if present)
-	Alias   string // |alias (if present)
-	Line    int    // 1-based line number
-	Col     int    // 0-based column
+	Target   string // note name/path
+	Section  string // #section (if present)
+	Alias    string // |alias (if present)
+	Line     int    // 1-based line number
+	Col      int    // 0-based column
+	InnerLen int    // byte length of raw content between [[ and ]]
 }
 
 // WikiLinkAt returns the wiki link at the given cursor position, or nil if none.
@@ -24,15 +25,8 @@ func WikiLinkAt(links []WikiLink, line, col int) *WikiLink {
 			continue
 		}
 
-		// Compute the end column: [[ + inner content + ]]
-		inner := l.Target
-		if l.Section != "" {
-			inner += "#" + l.Section
-		}
-		if l.Alias != "" {
-			inner += "|" + l.Alias
-		}
-		endCol := l.Col + 2 + len(inner) + 2 // [[ + inner + ]]
+		// End column: [[ + raw inner content + ]]
+		endCol := l.Col + 2 + l.InnerLen + 2
 
 		if col >= l.Col && col < endCol {
 			return l
@@ -87,8 +81,9 @@ func ExtractWikiLinks(content []byte) []WikiLink {
 			}
 
 			link := WikiLink{
-				Line: lineNum,
-				Col:  col + idx,
+				Line:     lineNum,
+				Col:      col + idx,
+				InnerLen: len(inner),
 			}
 
 			// Parse section: note#section
