@@ -63,6 +63,21 @@ type App struct {
 	// currentFile caches the open file's relative path for use in View().
 	// Never call RPC from View() — it can hang if the connection is dead.
 	currentFile string
+
+	// prevFile stores the previously opened note for gb (go back) navigation.
+	prevFile string
+}
+
+// navigateTo opens a note and updates the navigation history.
+func (a *App) navigateTo(relPath string) {
+	if a.currentFile != "" && a.currentFile != relPath {
+		a.prevFile = a.currentFile
+	}
+	fullPath := filepath.Join(a.cfg.VaultPath, relPath)
+	a.openInEditor(fullPath)
+	a.status.SetFile(relPath)
+	a.currentFile = relPath
+	a.updateBacklinks(relPath)
 }
 
 func New(cfg config.Config) App {
@@ -210,12 +225,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case panel.FileSelectedMsg:
-		fullPath := filepath.Join(a.cfg.VaultPath, msg.Path)
-		a.openInEditor(fullPath)
-		a.status.SetFile(msg.Path)
-		a.currentFile = msg.Path
+		a.navigateTo(msg.Path)
 		a.setFocus(focusEditor)
-		a.updateBacklinks(msg.Path)
 
 	case panel.FinderResultMsg:
 		a.handleFinderResult(msg.Path)
@@ -227,6 +238,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case panel.FinderClosedMsg:
 		a.setFocus(focusEditor)
+
+	case editor.FollowLinkMsg:
+		a.FollowLink()
+		return a, nil
+
+	case editor.GoBackMsg:
+		a.GoBack()
+		return a, nil
 
 	case editor.NoteClosedMsg:
 		// If prompt is already active, upgrade the pending action to "close"
