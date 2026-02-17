@@ -91,6 +91,28 @@ func (v *Vault) MoveNote(oldRel, newDir string) error {
 	return v.RenameNote(oldRel, newRel)
 }
 
+// CopyNote copies a note to a new directory, keeping the same filename.
+func (v *Vault) CopyNote(srcRel, destDir string) error {
+	srcAbs := filepath.Join(v.Root, srcRel)
+	destRel := filepath.Join(destDir, filepath.Base(srcRel))
+	destAbs := filepath.Join(v.Root, destRel)
+
+	if err := os.MkdirAll(filepath.Dir(destAbs), 0755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+
+	if _, err := os.Stat(destAbs); err == nil {
+		return fmt.Errorf("%s already exists", destRel)
+	}
+
+	data, err := os.ReadFile(srcAbs)
+	if err != nil {
+		return fmt.Errorf("read source: %w", err)
+	}
+
+	return os.WriteFile(destAbs, data, 0644)
+}
+
 // CreateInboxNote creates a quick inbox note.
 func (v *Vault) CreateInboxNote() (string, error) {
 	now := time.Now()

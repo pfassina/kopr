@@ -6,3 +6,5 @@ kopr
 *.db-shm
 .kopr/
 result
+.direnv/
+.envrc

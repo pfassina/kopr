@@ -1,6 +1,9 @@
 package index
 
-import "database/sql"
+import (
+	"database/sql"
+	"path/filepath"
+)
 
 // SearchResult represents a single search result.
 type SearchResult struct {
@@ -117,14 +120,16 @@ func (db *DB) ListAllNotes(limit int) ([]SearchResult, error) {
 }
 
 // GetBacklinks returns all notes that link to the given path.
+// Matches by basename since target_path stores basenames.
 func (db *DB) GetBacklinks(targetPath string) ([]BacklinkResult, error) {
+	basename := filepath.Base(targetPath)
 	rows, err := db.conn.Query(`
 		SELECT n.path, n.title, l.line, l.col
 		FROM links l
 		JOIN notes n ON n.id = l.source_id
 		WHERE l.target_path = ?
 		ORDER BY n.path
-	`, targetPath)
+	`, basename)
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +144,20 @@ func (db *DB) GetBacklinks(targetPath string) ([]BacklinkResult, error) {
 		results = append(results, r)
 	}
 	return results, rows.Err()
+}
+
+// FindNoteByBasename returns the relative path of a note matching the given basename.
+// Returns empty string if no match is found.
+func (db *DB) FindNoteByBasename(basename string) (string, error) {
+	var path string
+	err := db.conn.QueryRow(
+		`SELECT path FROM notes WHERE path = ? OR path LIKE ? LIMIT 1`,
+		basename, "%/"+basename,
+	).Scan(&path)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return path, err
 }
 
 // GetNoteIDByPath returns the ID of a note by its path.

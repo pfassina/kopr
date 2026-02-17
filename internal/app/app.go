@@ -27,8 +27,9 @@ const (
 )
 
 type promptAction struct {
-	kind string // "save", "close", "create-note", "delete-note", "rename-note", "move-note"
-	path string // target file path for delete/rename
+	kind  string // "save", "close", "create-note", "delete-note", "delete-notes", "rename-note"
+	path  string // target file path for delete/rename
+	paths []string // multiple paths for multi-delete
 }
 
 type App struct {
@@ -75,6 +76,7 @@ func (a *App) navigateTo(relPath string) {
 	}
 	fullPath := filepath.Join(a.cfg.VaultPath, relPath)
 	a.openInEditor(fullPath)
+	a.status.ClearError()
 	a.status.SetFile(relPath)
 	a.currentFile = relPath
 	a.updateBacklinks(relPath)
@@ -106,6 +108,7 @@ func New(cfg config.Config) App {
 		showInfo: state.ShowInfo,
 	}
 	a.initLeader()
+	a.tree.SetAccent(a.theme.Accent)
 
 	// Initialize index
 	dbPath := filepath.Join(cfg.VaultPath, ".kopr", "index.db")
@@ -269,7 +272,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case panel.TreeDeleteNoteMsg:
 		a.pendingPrompt = promptAction{kind: "delete-note", path: msg.Path}
-		a.prompt.Show("Delete "+msg.Name+"?", "type yes to confirm")
+		a.prompt.ShowConfirm("Delete " + msg.Name + "?")
 		return a, nil
 
 	case panel.TreeRenameNoteMsg:
@@ -277,13 +280,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.prompt.Show("Rename", msg.Name)
 		return a, nil
 
-	case panel.TreeMoveNoteMsg:
-		a.pendingPrompt = promptAction{kind: "move-note", path: msg.Path}
-		dir := filepath.Dir(msg.Path)
-		if dir == "." {
-			dir = ""
+	case panel.TreeDeleteNotesMsg:
+		names := make([]string, len(msg.Paths))
+		for i, p := range msg.Paths {
+			names[i] = filepath.Base(p)
 		}
-		a.prompt.Show("Move to", dir)
+		label := fmt.Sprintf("Delete %d files (%s)?", len(msg.Paths), strings.Join(names, ", "))
+		a.pendingPrompt = promptAction{kind: "delete-notes", paths: msg.Paths}
+		a.prompt.ShowConfirm(label)
+		return a, nil
+
+	case panel.TreePasteMsg:
+		return a, a.handlePaste(msg)
+
+	case panel.TreeClipboardChangedMsg:
+		a.updateClipboardStatus(msg.Op, msg.Count)
 		return a, nil
 
 	case panel.PromptResultMsg:
@@ -492,10 +503,10 @@ func (a *App) handlePromptResult(value string) tea.Cmd {
 		return a.handleCreateNote(value)
 	case "delete-note":
 		return a.handleDeleteNote(value, action.path)
+	case "delete-notes":
+		return a.handleDeleteNotes(value, action.paths)
 	case "rename-note":
 		return a.handleRenameNote(value, action.path)
-	case "move-note":
-		return a.handleMoveNote(value, action.path)
 	}
 	return nil
 }
@@ -505,6 +516,11 @@ func (a *App) handleSaveAs(value string, closeAfter bool) tea.Cmd {
 	relPath := value
 	if !strings.HasSuffix(relPath, ".md") {
 		relPath += ".md"
+	}
+
+	if msg := a.checkUniqueBasename(relPath); msg != "" {
+		a.status.SetError(msg)
+		return nil
 	}
 
 	rpc := a.editor.GetRPC()
@@ -567,6 +583,11 @@ func (a *App) handleCreateNote(name string) tea.Cmd {
 		relPath += ".md"
 	}
 
+	if msg := a.checkUniqueBasename(relPath); msg != "" {
+		a.status.SetError(msg)
+		return nil
+	}
+
 	content := fmt.Sprintf("---\ntitle: %s\n---\n\n", strings.TrimSuffix(name, ".md"))
 	fullPath, err := a.vault.CreateNote(relPath, content)
 	if err != nil {
@@ -581,28 +602,52 @@ func (a *App) handleCreateNote(name string) tea.Cmd {
 	return nil
 }
 
-// handleMoveNote moves a note to a new directory.
-func (a *App) handleMoveNote(newDir, oldPath string) tea.Cmd {
-	if err := a.vault.MoveNote(oldPath, newDir); err != nil {
+// handlePaste performs copy or move for files in the clipboard.
+func (a *App) handlePaste(msg panel.TreePasteMsg) tea.Cmd {
+	// Block copy-paste: it creates a duplicate basename
+	if msg.Op == panel.ClipboardCopy {
+		a.status.SetError("copy not allowed: would create duplicate filenames")
 		return nil
 	}
 
-	newRel := filepath.Join(newDir, filepath.Base(oldPath))
-
-	// If the moved file is currently open, update the editor
-	if a.currentFile == oldPath {
-		fullPath := filepath.Join(a.cfg.VaultPath, newRel)
-		rpc := a.editor.GetRPC()
-		if rpc != nil {
-			rpc.SetBufferName(fullPath)
-			rpc.WriteBuffer()
+	for _, src := range msg.Sources {
+		var err error
+		if msg.Op == panel.ClipboardCopy {
+			err = a.vault.CopyNote(src, msg.DestDir)
+		} else {
+			err = a.vault.MoveNote(src, msg.DestDir)
+			if err == nil && a.currentFile == src {
+				newRel := filepath.Join(msg.DestDir, filepath.Base(src))
+				fullPath := filepath.Join(a.cfg.VaultPath, newRel)
+				rpc := a.editor.GetRPC()
+				if rpc != nil {
+					rpc.SetBufferName(fullPath)
+					rpc.WriteBuffer()
+				}
+				a.status.SetFile(newRel)
+				a.currentFile = newRel
+			}
 		}
-		a.status.SetFile(newRel)
-		a.currentFile = newRel
+		_ = err
 	}
 
+	a.tree.ClearClipboard()
+	a.tree.ClearSelected()
+	a.updateClipboardStatus(panel.ClipboardNone, 0)
 	a.tree.Refresh()
 	return nil
+}
+
+// updateClipboardStatus updates the status bar clipboard indicator.
+func (a *App) updateClipboardStatus(op panel.ClipboardOp, count int) {
+	switch {
+	case op == panel.ClipboardCopy && count > 0:
+		a.status.SetClipboard(fmt.Sprintf("%d yanked", count))
+	case op == panel.ClipboardCut && count > 0:
+		a.status.SetClipboard(fmt.Sprintf("%d cut", count))
+	default:
+		a.status.SetClipboard("")
+	}
 }
 
 // handleDeleteNote deletes a note after confirmation.
@@ -611,12 +656,30 @@ func (a *App) handleDeleteNote(confirmation, relPath string) tea.Cmd {
 		return nil
 	}
 
-	// If the deleted file is currently open, go to splash
 	if a.currentFile == relPath {
 		a.showSplash()
 	}
 
 	a.vault.DeleteNote(relPath)
+	a.tree.ClearSelected()
+	a.tree.Refresh()
+	return nil
+}
+
+// handleDeleteNotes deletes multiple notes after confirmation.
+func (a *App) handleDeleteNotes(confirmation string, paths []string) tea.Cmd {
+	if strings.ToLower(strings.TrimSpace(confirmation)) != "yes" {
+		return nil
+	}
+
+	for _, p := range paths {
+		if a.currentFile == p {
+			a.showSplash()
+		}
+		a.vault.DeleteNote(p)
+	}
+
+	a.tree.ClearSelected()
 	a.tree.Refresh()
 	return nil
 }
@@ -634,8 +697,36 @@ func (a *App) handleRenameNote(newName, oldPath string) tea.Cmd {
 		newRel = filepath.Join(dir, newRel)
 	}
 
+	if msg := a.checkUniqueBasename(newRel); msg != "" {
+		a.status.SetError(msg)
+		return nil
+	}
+
+	// Capture old basename for link rewriting before rename
+	oldBasename := strings.TrimSuffix(filepath.Base(oldPath), ".md")
+	newBasename := strings.TrimSuffix(filepath.Base(newRel), ".md")
+
+	// Get backlinks before rename (while DB still has old data)
+	var backlinkPaths []string
+	if oldBasename != newBasename && a.db != nil {
+		backlinks, err := a.db.GetBacklinks(oldPath)
+		if err == nil {
+			for _, bl := range backlinks {
+				backlinkPaths = append(backlinkPaths, bl.SourcePath)
+			}
+		}
+	}
+
 	if err := a.vault.RenameNote(oldPath, newRel); err != nil {
 		return nil
+	}
+
+	// Rewrite wiki links in all notes that linked to the old name
+	if oldBasename != newBasename {
+		for _, srcPath := range backlinkPaths {
+			absPath := filepath.Join(a.cfg.VaultPath, srcPath)
+			vault.RewriteLinksInNote(absPath, oldBasename, newBasename)
+		}
 	}
 
 	// If the renamed file is currently open, update the editor
@@ -831,6 +922,20 @@ func overlayCenter(base, overlay string, width, height int) string {
 	}
 
 	return strings.Join(baseLines, "\n")
+}
+
+// checkUniqueBasename returns an error message if a different note with the same
+// basename already exists in the vault. Returns "" if the name is available.
+func (a *App) checkUniqueBasename(relPath string) string {
+	if a.db == nil {
+		return ""
+	}
+	basename := filepath.Base(relPath)
+	existing, err := a.db.FindNoteByBasename(basename)
+	if err != nil || existing == "" || existing == relPath {
+		return ""
+	}
+	return fmt.Sprintf("%q already exists at %s", basename, existing)
 }
 
 func ensureDir(path string) {

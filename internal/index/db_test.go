@@ -56,6 +56,39 @@ func TestSearchFiles(t *testing.T) {
 	}
 }
 
+func TestFindNoteByBasename(t *testing.T) {
+	db, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	db.UpsertNote("projects/my-note.md", "My Note", "my-note", "", "a", 1000, 10)
+	db.UpsertNote("daily/2024-01-01.md", "2024-01-01", "2024-01-01", "", "b", 1000, 10)
+	db.UpsertNote("root-note.md", "Root Note", "root-note", "", "c", 1000, 10)
+
+	tests := []struct {
+		basename string
+		want     string
+	}{
+		{"my-note.md", "projects/my-note.md"},
+		{"2024-01-01.md", "daily/2024-01-01.md"},
+		{"root-note.md", "root-note.md"},
+		{"nonexistent.md", ""},
+	}
+
+	for _, tt := range tests {
+		got, err := db.FindNoteByBasename(tt.basename)
+		if err != nil {
+			t.Errorf("FindNoteByBasename(%q): %v", tt.basename, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("FindNoteByBasename(%q) = %q, want %q", tt.basename, got, tt.want)
+		}
+	}
+}
+
 func TestBacklinks(t *testing.T) {
 	db, err := OpenMemory()
 	if err != nil {
@@ -64,11 +97,13 @@ func TestBacklinks(t *testing.T) {
 	defer db.Close()
 
 	id1, _ := db.UpsertNote("a.md", "Note A", "a", "", "a", 1000, 10)
-	db.UpsertNote("b.md", "Note B", "b", "", "b", 1000, 10)
+	db.UpsertNote("projects/b.md", "Note B", "b", "", "b", 1000, 10)
 
+	// Links store basenames
 	db.InsertLink(id1, "b.md", "", "", 5, 10)
 
-	backlinks, err := db.GetBacklinks("b.md")
+	// GetBacklinks extracts basename from the target path
+	backlinks, err := db.GetBacklinks("projects/b.md")
 	if err != nil {
 		t.Fatal(err)
 	}

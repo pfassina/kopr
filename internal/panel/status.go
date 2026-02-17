@@ -9,10 +9,12 @@ import (
 
 // Status is the status bar at the bottom.
 type Status struct {
-	width    int
-	mode     string
-	file     string
-	vaultDir string
+	width     int
+	mode      string
+	file      string
+	vaultDir  string
+	clipboard string
+	errMsg    string
 }
 
 func NewStatus(vaultDir string) Status {
@@ -32,6 +34,18 @@ func (s *Status) SetFile(file string) {
 
 func (s *Status) SetWidth(width int) {
 	s.width = width
+}
+
+func (s *Status) SetClipboard(label string) {
+	s.clipboard = label
+}
+
+func (s *Status) SetError(msg string) {
+	s.errMsg = msg
+}
+
+func (s *Status) ClearError() {
+	s.errMsg = ""
 }
 
 func (s Status) View() string {
@@ -67,19 +81,38 @@ func (s Status) View() string {
 		Padding(0, 1)
 
 	mode := modeStyle.Render(s.mode)
-	file := s.file
-	if file == "" {
-		file = s.vaultDir
+
+	var fileSection string
+	if s.errMsg != "" {
+		errStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("236")).
+			Foreground(lipgloss.Color("203")).
+			Padding(0, 1)
+		fileSection = errStyle.Render(s.errMsg)
+	} else {
+		file := s.file
+		if file == "" {
+			file = s.vaultDir
+		}
+		fileSection = fileStyle.Render(file)
 	}
-	fileSection := fileStyle.Render(file)
 
 	left := fmt.Sprintf("%s %s", mode, fileSection)
 
-	padLen := s.width - lipgloss.Width(left)
+	right := ""
+	if s.clipboard != "" {
+		clipStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("236")).
+			Foreground(lipgloss.Color("252")).
+			Padding(0, 1)
+		right = clipStyle.Render(s.clipboard)
+	}
+
+	padLen := s.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if padLen < 0 {
 		padLen = 0
 	}
 	padding := bgStyle.Render(strings.Repeat(" ", padLen))
 
-	return left + padding
+	return left + padding + right
 }

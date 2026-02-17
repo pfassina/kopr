@@ -18,11 +18,13 @@ type PromptCancelledMsg struct{}
 
 // Prompt is a centered overlay text input dialog.
 type Prompt struct {
-	input   textinput.Model
-	title   string
-	width   int
-	height  int
-	visible bool
+	input         textinput.Model
+	title         string
+	width         int
+	height        int
+	visible       bool
+	confirm       bool // true = yes/no confirm mode
+	confirmCursor int  // 0=Yes, 1=No
 }
 
 func NewPrompt() Prompt {
@@ -36,14 +38,23 @@ func NewPrompt() Prompt {
 
 func (p *Prompt) Show(title, placeholder string) {
 	p.visible = true
+	p.confirm = false
 	p.title = title
 	p.input.Placeholder = placeholder
 	p.input.SetValue("")
 	p.input.Focus()
 }
 
+func (p *Prompt) ShowConfirm(title string) {
+	p.visible = true
+	p.confirm = true
+	p.confirmCursor = 0
+	p.title = title
+}
+
 func (p *Prompt) Hide() {
 	p.visible = false
+	p.confirm = false
 	p.input.Blur()
 }
 
@@ -54,6 +65,10 @@ func (p Prompt) Visible() bool {
 func (p Prompt) Update(msg tea.Msg) (Prompt, tea.Cmd) {
 	if !p.visible {
 		return p, nil
+	}
+
+	if p.confirm {
+		return p.updateConfirm(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -78,9 +93,37 @@ func (p Prompt) Update(msg tea.Msg) (Prompt, tea.Cmd) {
 	return p, cmd
 }
 
+func (p Prompt) updateConfirm(msg tea.Msg) (Prompt, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "j", "down":
+			p.confirmCursor = 1
+		case "k", "up":
+			p.confirmCursor = 0
+		case "enter":
+			p.visible = false
+			p.confirm = false
+			if p.confirmCursor == 0 {
+				return p, func() tea.Msg { return PromptResultMsg{Value: "yes"} }
+			}
+			return p, func() tea.Msg { return PromptCancelledMsg{} }
+		case "esc", "ctrl+c":
+			p.visible = false
+			p.confirm = false
+			return p, func() tea.Msg { return PromptCancelledMsg{} }
+		}
+	}
+	return p, nil
+}
+
 func (p Prompt) View() string {
 	if !p.visible {
 		return ""
+	}
+
+	if p.confirm {
+		return p.viewConfirm()
 	}
 
 	width := p.width
@@ -107,6 +150,44 @@ func (p Prompt) View() string {
 	lines = append(lines, p.input.View())
 	lines = append(lines, "")
 	lines = append(lines, dimStyle.Render("Enter to confirm, Esc to cancel"))
+
+	content := strings.Join(lines, "\n")
+	return borderStyle.Render(content)
+}
+
+func (p Prompt) viewConfirm() string {
+	width := p.width
+	if width == 0 {
+		width = 60
+	}
+	innerWidth := width - 6
+
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("212")).
+		Padding(0, 1).
+		Width(innerWidth)
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("212"))
+
+	accentStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("212"))
+
+	dimStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	options := [2]string{"Yes", "No"}
+	var lines []string
+	lines = append(lines, titleStyle.Render(p.title))
+	for i, opt := range options {
+		if i == p.confirmCursor {
+			lines = append(lines, accentStyle.Render("> "+opt))
+		} else {
+			lines = append(lines, dimStyle.Render("  "+opt))
+		}
+	}
 
 	content := strings.Join(lines, "\n")
 	return borderStyle.Render(content)

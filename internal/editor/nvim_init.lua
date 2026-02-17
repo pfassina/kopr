@@ -70,5 +70,9 @@ vim.api.nvim_create_autocmd("FileType", {
 pcall(function()
     require("render-markdown").setup({
         render_modes = { "n", "v", "i", "c" },
+        heading = {
+            icons = { '', '', '', '', '', '' },
+            position = 'inline',
+        },
     })
 end)
