@@ -39,6 +39,9 @@ func (s Status) View() string {
 		return ""
 	}
 
+	bgStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("236"))
+
 	modeColors := map[string]lipgloss.Color{
 		"NORMAL":  lipgloss.Color("212"),
 		"INSERT":  lipgloss.Color("114"),
@@ -71,10 +74,6 @@ func (s Status) View() string {
 	fileSection := fileStyle.Render(file)
 
 	left := fmt.Sprintf("%s %s", mode, fileSection)
-
-	// Pad the rest with background
-	bgStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("236"))
 
 	padLen := s.width - lipgloss.Width(left)
 	if padLen < 0 {

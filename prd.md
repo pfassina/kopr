@@ -16,7 +16,7 @@ Below is a single, complete, copy-ready PRD that consolidates everything we disc
 
 Product Name (Working)
 
-VimVault
+Kopr
 
 A self-hosted, terminal-first knowledge system combining Obsidian-style note management with Neovim-grade editing.
 
@@ -97,7 +97,7 @@ Designed for SSH/tmux first.
 └──────┬───────┘
        │
 ┌──────▼────────┐
-│ VimVault TUI  │  ← Go + Bubble Tea
+│ Kopr TUI  │  ← Go + Bubble Tea
 │ UI Shell      │
 └──────┬────────┘
        │ PTY
@@ -132,7 +132,7 @@ UX and keymaps must be identical.
 
 FR-2: Session Persistence
  • Restore layout, buffers, cursors
- • Stored in .vimvault/state.json
+ • Stored in .kopr/state.json
  • Auto-resume on reconnect
 
 ⸻
@@ -695,7 +695,7 @@ Scope creep Strict MVP
 
 Strategic Summary
 
-VimVault is:
+Kopr is:
 
 Obsidian’s knowledge model
  • Neovim’s editing power

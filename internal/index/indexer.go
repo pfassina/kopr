@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yourusername/vimvault/internal/markdown"
+	"github.com/pfassina/kopr/internal/markdown"
 )
 
 // Indexer manages the note indexing pipeline.

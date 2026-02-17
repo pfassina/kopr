@@ -6,17 +6,19 @@ import (
 )
 
 type Config struct {
-	VaultPath   string
-	Listen      string
-	Serve       bool
-	Theme       string
-	TreeWidth   int
-	InfoWidth   int
-	ShowTree    bool
-	ShowInfo    bool
-	ShowStatus  bool
-	LeaderKey   string
-	LeaderTimeout int // milliseconds
+	VaultPath      string
+	Listen         string
+	Serve          bool
+	Theme          string
+	TreeWidth      int
+	InfoWidth      int
+	ShowTree       bool
+	ShowInfo       bool
+	ShowStatus     bool
+	LeaderKey      string
+	LeaderTimeout  int // milliseconds
+	NvimMode       string
+	ResetNvimConfig bool
 }
 
 func Default() Config {
@@ -33,5 +35,6 @@ func Default() Config {
 		ShowStatus:    true,
 		LeaderKey:     " ",
 		LeaderTimeout: 500,
+		NvimMode:      "managed",
 	}
 }

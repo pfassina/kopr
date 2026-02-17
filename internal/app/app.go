@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,12 +9,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/yourusername/vimvault/internal/config"
-	"github.com/yourusername/vimvault/internal/editor"
-	"github.com/yourusername/vimvault/internal/index"
-	"github.com/yourusername/vimvault/internal/panel"
-	"github.com/yourusername/vimvault/internal/session"
-	"github.com/yourusername/vimvault/internal/vault"
+	"github.com/pfassina/kopr/internal/config"
+	"github.com/pfassina/kopr/internal/editor"
+	"github.com/pfassina/kopr/internal/index"
+	"github.com/pfassina/kopr/internal/panel"
+	"github.com/pfassina/kopr/internal/session"
+	"github.com/pfassina/kopr/internal/vault"
 )
 
 type focusedPanel int
@@ -25,6 +26,11 @@ const (
 	focusFinder
 )
 
+type promptAction struct {
+	kind string // "save", "close", "create-note", "delete-note", "rename-note", "move-note"
+	path string // target file path for delete/rename
+}
+
 type App struct {
 	cfg      config.Config
 	editor   editor.Editor
@@ -33,6 +39,7 @@ type App struct {
 	status   panel.Status
 	whichKey panel.WhichKey
 	finder   panel.Finder
+	prompt   panel.Prompt
 	vault    *vault.Vault
 	db       *index.DB
 	indexer  *index.Indexer
@@ -49,6 +56,13 @@ type App struct {
 	// Leader key system
 	bindings map[string]*Binding
 	leader   LeaderState
+
+	// pendingPrompt tracks which action the overlay prompt is serving.
+	pendingPrompt promptAction
+
+	// currentFile caches the open file's relative path for use in View().
+	// Never call RPC from View() — it can hang if the connection is dead.
+	currentFile string
 }
 
 func New(cfg config.Config) App {
@@ -62,12 +76,13 @@ func New(cfg config.Config) App {
 
 	a := App{
 		cfg:      cfg,
-		editor:   editor.New(cfg.VaultPath),
+		editor:   editor.New(cfg.VaultPath, editor.ProfileMode(cfg.NvimMode)),
 		tree:     t,
 		info:     panel.NewInfo(),
 		status:   panel.NewStatus(cfg.VaultPath),
 		whichKey: panel.NewWhichKey(),
 		finder:   f,
+		prompt:   panel.NewPrompt(),
 		vault:    v,
 		store:    store,
 		theme:    GetTheme(cfg.Theme),
@@ -78,7 +93,7 @@ func New(cfg config.Config) App {
 	a.initLeader()
 
 	// Initialize index
-	dbPath := filepath.Join(cfg.VaultPath, ".vimvault", "index.db")
+	dbPath := filepath.Join(cfg.VaultPath, ".kopr", "index.db")
 	ensureDir(filepath.Dir(dbPath))
 	db, err := index.Open(dbPath)
 	if err == nil {
@@ -110,6 +125,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 
+		// Save-as prompt takes priority when visible
+		if a.prompt.Visible() {
+			var cmd tea.Cmd
+			a.prompt, cmd = a.prompt.Update(msg)
+			return a, cmd
+		}
+
 		// Finder takes priority when visible
 		if a.finder.Visible() {
 			var cmd tea.Cmd
@@ -117,10 +139,52 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, cmd
 		}
 
-		// Try leader key system
-		if consumed, cmd := a.handleLeaderKey(msg.String()); consumed {
-			a.updateWhichKey()
-			return a, cmd
+		// When splash is showing, only leader keys work
+		if a.editor.ShowSplash() && a.focused == focusEditor {
+			// Escape returns from side panels to editor
+			if msg.String() == "esc" {
+				return a, nil
+			}
+			// Try leader key system
+			if consumed, cmd := a.handleLeaderKey(msg.String()); consumed {
+				a.updateWhichKey()
+				return a, cmd
+			}
+			// Don't send other keys to the editor while splash is showing
+			return a, nil
+		}
+
+		// Ctrl+h/l to switch panel focus
+		switch msg.String() {
+		case "ctrl+h":
+			a.focusLeft()
+			return a, nil
+		case "ctrl+l":
+			a.focusRight()
+			return a, nil
+		}
+
+		// Escape returns from side panels to editor (unless tree help is showing)
+		if msg.String() == "esc" && (a.focused == focusTree || a.focused == focusInfo) {
+			if a.focused == focusTree && a.tree.ShowingHelp() {
+				break // let tree handle it to dismiss help
+			}
+			a.setFocus(focusEditor)
+			return a, nil
+		}
+
+		// Try leader key system (works from editor and side panels)
+		// Skip when tree help is showing so any key dismisses help first
+		if !(a.focused == focusTree && a.tree.ShowingHelp()) {
+			if consumed, cmd := a.handleLeaderKey(msg.String()); consumed {
+				a.updateWhichKey()
+				return a, cmd
+			}
+		}
+
+		// Side panels handle their own keys
+		if a.focused == focusTree || a.focused == focusInfo {
+			break
 		}
 
 	case leaderTimeoutMsg:
@@ -132,7 +196,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 		a.finder.SetSize(msg.Width, msg.Height)
-		a.updateLayout()
+		a.prompt.SetSize(msg.Width, msg.Height)
+		cmd := a.updateLayout()
+		if cmd != nil {
+			return a, cmd
+		}
 
 	case editor.ModeChangedMsg:
 		a.status.SetMode(modeDisplayName(msg.Mode))
@@ -143,18 +211,67 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case panel.FileSelectedMsg:
 		fullPath := filepath.Join(a.cfg.VaultPath, msg.Path)
-		a.editor.OpenFile(fullPath)
+		a.openInEditor(fullPath)
 		a.status.SetFile(msg.Path)
-		a.focused = focusEditor
-		a.tree.SetFocused(false)
+		a.currentFile = msg.Path
+		a.setFocus(focusEditor)
 		a.updateBacklinks(msg.Path)
 
 	case panel.FinderResultMsg:
 		a.handleFinderResult(msg.Path)
-		a.focused = focusEditor
+		a.setFocus(focusEditor)
+
+	case panel.FinderCreateMsg:
+		a.createNoteFromFinder(msg.Name)
+		a.setFocus(focusEditor)
 
 	case panel.FinderClosedMsg:
-		a.focused = focusEditor
+		a.setFocus(focusEditor)
+
+	case editor.NoteClosedMsg:
+		// If prompt is already active, upgrade the pending action to "close"
+		// instead of interrupting (e.g. :wq on unnamed sends both
+		// save-unnamed and close-note in quick succession)
+		if a.prompt.Visible() {
+			a.pendingPrompt.kind = "close"
+			return a, nil
+		}
+		return a, a.handleNoteClose(msg.Save)
+
+	case editor.SaveUnnamedMsg:
+		a.pendingPrompt = promptAction{kind: "save"}
+		a.prompt.Show("Save as", "my-note.md")
+		return a, nil
+
+	case panel.TreeNewNoteMsg:
+		a.pendingPrompt = promptAction{kind: "create-note"}
+		a.prompt.Show("New note", "my-note.md")
+		return a, nil
+
+	case panel.TreeDeleteNoteMsg:
+		a.pendingPrompt = promptAction{kind: "delete-note", path: msg.Path}
+		a.prompt.Show("Delete "+msg.Name+"?", "type yes to confirm")
+		return a, nil
+
+	case panel.TreeRenameNoteMsg:
+		a.pendingPrompt = promptAction{kind: "rename-note", path: msg.Path}
+		a.prompt.Show("Rename", msg.Name)
+		return a, nil
+
+	case panel.TreeMoveNoteMsg:
+		a.pendingPrompt = promptAction{kind: "move-note", path: msg.Path}
+		dir := filepath.Dir(msg.Path)
+		if dir == "." {
+			dir = ""
+		}
+		a.prompt.Show("Move to", dir)
+		return a, nil
+
+	case panel.PromptResultMsg:
+		return a, a.handlePromptResult(msg.Value)
+
+	case panel.PromptCancelledMsg:
+		return a, a.handlePromptCancelled()
 
 	case indexInitDoneMsg:
 		// Index is ready - start file watcher
@@ -178,6 +295,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case focusTree:
 			a.tree, cmd = a.tree.Update(msg)
 			return a, cmd
+		case focusInfo:
+			a.info, cmd = a.info.Update(msg)
+			return a, cmd
 		default:
 			a.editor, cmd = a.editor.Update(msg)
 			return a, cmd
@@ -194,18 +314,22 @@ func (a *App) View() string {
 		return "Loading..."
 	}
 
-	layout := ComputeLayout(a.width, a.height, a.showTree && !a.zenMode, a.showInfo && !a.zenMode, a.cfg.TreeWidth, a.cfg.InfoWidth)
+	showTree, showInfo := a.panelsVisible()
+	layout := ComputeLayout(a.width, a.height, showTree, showInfo, a.cfg.TreeWidth, a.cfg.InfoWidth)
 
-	editorView := a.editor.View()
+	// Editor title row
+	editorTitle := a.editorTitle()
+
+	editorView := editorTitle + "\n" + a.editor.View()
 
 	var main string
 
-	if a.zenMode || (!a.showTree && !a.showInfo) {
+	if !showTree && !showInfo {
 		main = editorView
 	} else {
 		var columns []string
 
-		if a.showTree {
+		if showTree {
 			borderStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder(), false, true, false, false).
 				BorderForeground(lipgloss.Color("240")).
@@ -219,7 +343,7 @@ func (a *App) View() string {
 			Height(layout.Height)
 		columns = append(columns, editorStyle.Render(editorView))
 
-		if a.showInfo {
+		if showInfo {
 			borderStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder(), false, false, false, true).
 				BorderForeground(lipgloss.Color("240")).
@@ -249,6 +373,14 @@ func (a *App) View() string {
 		}
 	}
 
+	// Overlay save-as prompt
+	if a.prompt.Visible() {
+		promptView := a.prompt.View()
+		if promptView != "" {
+			result = overlayCenter(result, promptView, a.width, a.height)
+		}
+	}
+
 	return result
 }
 
@@ -274,8 +406,243 @@ func (a *App) Close() {
 	}
 }
 
-func (a *App) updateLayout() {
-	layout := ComputeLayout(a.width, a.height, a.showTree && !a.zenMode, a.showInfo && !a.zenMode, a.cfg.TreeWidth, a.cfg.InfoWidth)
+// handleNoteClose processes a quit/close command from neovim.
+func (a *App) handleNoteClose(save bool) tea.Cmd {
+	rpc := a.editor.GetRPC()
+	if rpc == nil {
+		return nil
+	}
+
+	if save {
+		// Check if buffer is named using cached path (never call RPC here
+		// since neovim might be in an error state from QuitPre)
+		if a.currentFile == "" {
+			// Unnamed buffer — ask for title, then close to splash
+			a.pendingPrompt = promptAction{kind: "close"}
+			a.prompt.Show("Save as", "my-note.md")
+			return nil
+		}
+		// Named buffer — save, then go to splash
+		rpc.ExecCommand("w")
+	}
+
+	a.showSplash()
+	return nil
+}
+
+// showSplash transitions the editor to the splash screen.
+func (a *App) showSplash() {
+	rpc := a.editor.GetRPC()
+	if rpc != nil {
+		rpc.LoadSplashBuffer()
+	}
+	a.editor.SetShowSplash(true)
+	a.status.SetFile("")
+	a.currentFile = ""
+	a.info.Clear()
+	a.setFocus(focusEditor)
+	a.updateLayout()
+}
+
+// openInEditor opens a file and recalculates layout since splash is dismissed.
+func (a *App) openInEditor(path string) {
+	a.editor.OpenFile(path)
+	a.updateLayout()
+}
+
+// handlePromptCancelled handles Esc/empty input on the overlay prompt.
+func (a *App) handlePromptCancelled() tea.Cmd {
+	action := a.pendingPrompt
+	a.pendingPrompt = promptAction{}
+
+	if action.kind == "close" {
+		a.showSplash()
+	}
+	return nil
+}
+
+// handlePromptResult handles a confirmed value from the overlay prompt.
+func (a *App) handlePromptResult(value string) tea.Cmd {
+	action := a.pendingPrompt
+	a.pendingPrompt = promptAction{}
+
+	switch action.kind {
+	case "save", "close":
+		return a.handleSaveAs(value, action.kind == "close")
+	case "create-note":
+		return a.handleCreateNote(value)
+	case "delete-note":
+		return a.handleDeleteNote(value, action.path)
+	case "rename-note":
+		return a.handleRenameNote(value, action.path)
+	case "move-note":
+		return a.handleMoveNote(value, action.path)
+	}
+	return nil
+}
+
+// handleSaveAs saves an unnamed buffer with the given name.
+func (a *App) handleSaveAs(value string, closeAfter bool) tea.Cmd {
+	relPath := value
+	if !strings.HasSuffix(relPath, ".md") {
+		relPath += ".md"
+	}
+
+	rpc := a.editor.GetRPC()
+	if rpc == nil {
+		return nil
+	}
+
+	// Get current buffer content before setting name
+	content, err := rpc.BufferContent()
+	if err != nil {
+		return nil
+	}
+
+	// Build content string
+	var buf strings.Builder
+	for i, line := range content {
+		buf.Write(line)
+		if i < len(content)-1 {
+			buf.WriteByte('\n')
+		}
+	}
+
+	// Create the file on disk via vault
+	fullPath, err := a.vault.CreateNote(relPath, buf.String())
+	if err != nil {
+		return nil
+	}
+
+	// Make the buffer modifiable, set name, and write
+	rpc.ExecCommand("setlocal modifiable")
+	rpc.SetBufferName(fullPath)
+	// Remove BufWriteCmd interference by setting buftype back to normal
+	rpc.ExecCommand("setlocal buftype=")
+	rpc.WriteBuffer()
+
+	a.status.SetFile(relPath)
+	a.currentFile = relPath
+	a.tree.Refresh()
+	a.updateBacklinks(relPath)
+
+	if closeAfter {
+		a.showSplash()
+	}
+
+	return nil
+}
+
+// handleCreateNote creates a new empty note or directory from the tree panel.
+func (a *App) handleCreateNote(name string) tea.Cmd {
+	// Directory creation: name ends with /
+	if strings.HasSuffix(name, "/") {
+		dirPath := strings.TrimSuffix(name, "/")
+		a.vault.CreateDir(dirPath)
+		a.tree.Refresh()
+		return nil
+	}
+
+	relPath := name
+	if !strings.HasSuffix(relPath, ".md") {
+		relPath += ".md"
+	}
+
+	content := fmt.Sprintf("---\ntitle: %s\n---\n\n", strings.TrimSuffix(name, ".md"))
+	fullPath, err := a.vault.CreateNote(relPath, content)
+	if err != nil {
+		return nil
+	}
+
+	a.openInEditor(fullPath)
+	a.status.SetFile(relPath)
+	a.currentFile = relPath
+	a.tree.Refresh()
+	a.setFocus(focusEditor)
+	return nil
+}
+
+// handleMoveNote moves a note to a new directory.
+func (a *App) handleMoveNote(newDir, oldPath string) tea.Cmd {
+	if err := a.vault.MoveNote(oldPath, newDir); err != nil {
+		return nil
+	}
+
+	newRel := filepath.Join(newDir, filepath.Base(oldPath))
+
+	// If the moved file is currently open, update the editor
+	if a.currentFile == oldPath {
+		fullPath := filepath.Join(a.cfg.VaultPath, newRel)
+		rpc := a.editor.GetRPC()
+		if rpc != nil {
+			rpc.SetBufferName(fullPath)
+			rpc.WriteBuffer()
+		}
+		a.status.SetFile(newRel)
+		a.currentFile = newRel
+	}
+
+	a.tree.Refresh()
+	return nil
+}
+
+// handleDeleteNote deletes a note after confirmation.
+func (a *App) handleDeleteNote(confirmation, relPath string) tea.Cmd {
+	if strings.ToLower(strings.TrimSpace(confirmation)) != "yes" {
+		return nil
+	}
+
+	// If the deleted file is currently open, go to splash
+	if a.currentFile == relPath {
+		a.showSplash()
+	}
+
+	a.vault.DeleteNote(relPath)
+	a.tree.Refresh()
+	return nil
+}
+
+// handleRenameNote renames a note to the given name.
+func (a *App) handleRenameNote(newName, oldPath string) tea.Cmd {
+	newRel := newName
+	if !strings.HasSuffix(newRel, ".md") {
+		newRel += ".md"
+	}
+
+	// Keep the same directory
+	dir := filepath.Dir(oldPath)
+	if dir != "." {
+		newRel = filepath.Join(dir, newRel)
+	}
+
+	if err := a.vault.RenameNote(oldPath, newRel); err != nil {
+		return nil
+	}
+
+	// If the renamed file is currently open, update the editor
+	if a.currentFile == oldPath {
+		fullPath := filepath.Join(a.cfg.VaultPath, newRel)
+		rpc := a.editor.GetRPC()
+		if rpc != nil {
+			rpc.SetBufferName(fullPath)
+			rpc.WriteBuffer()
+		}
+		a.status.SetFile(newRel)
+		a.currentFile = newRel
+	}
+
+	a.tree.Refresh()
+	return nil
+}
+
+func (a *App) panelsVisible() (bool, bool) {
+	splash := a.editor.ShowSplash()
+	return a.showTree && !a.zenMode && !splash, a.showInfo && !a.zenMode && !splash
+}
+
+func (a *App) updateLayout() tea.Cmd {
+	showTree, showInfo := a.panelsVisible()
+	layout := ComputeLayout(a.width, a.height, showTree, showInfo, a.cfg.TreeWidth, a.cfg.InfoWidth)
 
 	a.tree.SetSize(layout.TreeWidth, layout.Height)
 	a.info.SetSize(layout.InfoWidth, layout.Height)
@@ -284,9 +651,11 @@ func (a *App) updateLayout() {
 
 	editorSize := tea.WindowSizeMsg{
 		Width:  layout.EditorWidth,
-		Height: layout.Height,
+		Height: layout.Height - 1, // -1 for editor title row
 	}
-	a.editor, _ = a.editor.Update(editorSize)
+	var cmd tea.Cmd
+	a.editor, cmd = a.editor.Update(editorSize)
+	return cmd
 }
 
 func (a *App) updateWhichKey() {
@@ -305,18 +674,79 @@ func (a *App) updateWhichKey() {
 	a.whichKey.SetEntries(a.leader.keys, entries)
 }
 
+func (a *App) editorTitle() string {
+	title := "Kopr"
+	if !a.editor.ShowSplash() && a.currentFile != "" {
+		title = filepath.Base(a.currentFile)
+	}
+
+	var style lipgloss.Style
+	if a.focused == focusEditor {
+		style = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("212")).
+			Underline(true).
+			Padding(0, 1)
+	} else {
+		style = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("240")).
+			Padding(0, 1)
+	}
+
+	return style.Render(title)
+}
+
+func (a *App) setFocus(target focusedPanel) {
+	a.tree.SetFocused(target == focusTree)
+	a.info.SetFocused(target == focusInfo)
+	a.editor.SetFocused(target == focusEditor)
+	a.focused = target
+}
+
+func (a *App) focusLeft() {
+	switch a.focused {
+	case focusEditor:
+		if a.showTree && !a.zenMode {
+			a.setFocus(focusTree)
+		}
+	case focusInfo:
+		a.setFocus(focusEditor)
+	}
+}
+
+func (a *App) focusRight() {
+	switch a.focused {
+	case focusEditor:
+		if a.showInfo && !a.zenMode {
+			a.setFocus(focusInfo)
+		}
+	case focusTree:
+		a.setFocus(focusEditor)
+	}
+}
+
 func (a *App) ToggleTree() {
 	a.showTree = !a.showTree
+	if !a.showTree && a.focused == focusTree {
+		a.setFocus(focusEditor)
+	}
 	a.updateLayout()
 }
 
 func (a *App) ToggleInfo() {
 	a.showInfo = !a.showInfo
+	if !a.showInfo && a.focused == focusInfo {
+		a.setFocus(focusEditor)
+	}
 	a.updateLayout()
 }
 
 func (a *App) ToggleZen() {
 	a.zenMode = !a.zenMode
+	if a.zenMode && (a.focused == focusTree || a.focused == focusInfo) {
+		a.setFocus(focusEditor)
+	}
 	a.updateLayout()
 }
 

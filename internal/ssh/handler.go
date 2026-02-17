@@ -5,8 +5,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	bts "github.com/charmbracelet/wish/bubbletea"
 
-	"github.com/yourusername/vimvault/internal/app"
-	"github.com/yourusername/vimvault/internal/config"
+	"github.com/pfassina/kopr/internal/app"
+	"github.com/pfassina/kopr/internal/config"
 )
 
 // NewHandler returns a Bubble Tea handler for SSH sessions.

@@ -3,18 +3,29 @@ package editor
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Messages
-type vtOutputMsg []byte
+type vtOutputMsg struct {
+	data []byte
+	pty  *nvimPTY
+}
 
 type vtClosedMsg struct{ err error }
 
-type editorStartedMsg struct{}
+type editorStartedMsg struct {
+	nvim   *nvimPTY
+	screen *vtScreen
+	socket string
+}
 
-type rpcConnectedMsg struct{}
+type rpcConnectedMsg struct {
+	rpc *RPC
+}
 
 type editorErrorMsg struct{ err error }
 
@@ -22,26 +33,40 @@ type ModeChangedMsg struct {
 	Mode NvimMode
 }
 
+// NoteClosedMsg is sent when neovim quit/close commands are intercepted.
+type NoteClosedMsg struct {
+	Save bool
+}
+
+// SaveUnnamedMsg is sent when :w is used on an unnamed buffer.
+type SaveUnnamedMsg struct{}
+
 // Editor is a Bubble Tea model that embeds Neovim in a PTY
 // and renders it via a VT emulator, with RPC for programmatic control.
 type Editor struct {
-	width      int
-	height     int
-	vaultPath  string
-	socketPath string
-	nvim       *nvimPTY
-	rpc        *RPC
-	screen     *vtScreen
-	started    bool
-	mode       NvimMode
-	err        error
-	program    *tea.Program // set externally for RPC event delivery
+	width       int
+	height      int
+	vaultPath   string
+	socketPath  string
+	profileMode ProfileMode
+	nvim        *nvimPTY
+	rpc         *RPC
+	screen      *vtScreen
+	started     bool
+	mode        NvimMode
+	err         error
+	program     *tea.Program
+	focused     bool
+	showSplash  bool
 }
 
-func New(vaultPath string) Editor {
+func New(vaultPath string, profileMode ProfileMode) Editor {
 	return Editor{
-		vaultPath: vaultPath,
-		mode:      ModeNormal,
+		vaultPath:   vaultPath,
+		profileMode: profileMode,
+		mode:        ModeNormal,
+		focused:     true,
+		showSplash:  true,
 	}
 }
 
@@ -53,46 +78,52 @@ func (e Editor) Init() tea.Cmd {
 	return nil
 }
 
-// start begins the Neovim process.
-func (e *Editor) start() tea.Cmd {
+// start spawns Neovim and returns resources via message.
+func (e Editor) start() tea.Cmd {
+	width, height, vaultPath, profileMode := e.width, e.height, e.vaultPath, e.profileMode
 	return func() tea.Msg {
-		e.socketPath = fmt.Sprintf("/tmp/vimvault-%d.sock", os.Getpid())
-		os.Remove(e.socketPath)
+		if err := EnsureProfile(profileMode); err != nil {
+			return editorErrorMsg{fmt.Errorf("nvim profile: %w", err)}
+		}
 
-		nvim, err := startNvim(e.width, e.height, e.socketPath, e.vaultPath)
+		socketPath := fmt.Sprintf("/tmp/kopr-%d.sock", os.Getpid())
+		os.Remove(socketPath)
+
+		nvim, err := startNvim(width, height, socketPath, vaultPath)
 		if err != nil {
 			return editorErrorMsg{err}
 		}
-		e.nvim = nvim
-		e.screen = newVTScreen(e.width, e.height)
-		return editorStartedMsg{}
+		screen := newVTScreen(width, height, nvim.file)
+		return editorStartedMsg{nvim: nvim, screen: screen, socket: socketPath}
 	}
 }
 
-// connectRPC establishes the RPC connection to Neovim.
-func (e *Editor) connectRPC() tea.Cmd {
+// connectRPC dials the socket and returns the client via message.
+func (e Editor) connectRPC(program *tea.Program) tea.Cmd {
+	socketPath := e.socketPath
 	return func() tea.Msg {
-		rpc, err := ConnectRPC(e.socketPath, func(mode NvimMode) {
-			if e.program != nil {
-				e.program.Send(ModeChangedMsg{Mode: mode})
+		rpc, err := ConnectRPC(socketPath, func(mode NvimMode) {
+			if program != nil {
+				program.Send(ModeChangedMsg{Mode: mode})
 			}
 		})
 		if err != nil {
 			return editorErrorMsg{err}
 		}
-		e.rpc = rpc
-		return rpcConnectedMsg{}
+		return rpcConnectedMsg{rpc: rpc}
 	}
 }
 
 // waitForOutput reads from the PTY and returns the output as a message.
-func (e *Editor) waitForOutput() tea.Msg {
-	buf := make([]byte, 32*1024)
-	n, err := e.nvim.file.Read(buf)
-	if err != nil {
-		return vtClosedMsg{err}
+func waitForOutput(nvim *nvimPTY) tea.Cmd {
+	return func() tea.Msg {
+		buf := make([]byte, 32*1024)
+		n, err := nvim.file.Read(buf)
+		if err != nil {
+			return vtClosedMsg{err}
+		}
+		return vtOutputMsg{data: buf[:n], pty: nvim}
 	}
-	return vtOutputMsg(buf[:n])
 }
 
 func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
@@ -111,10 +142,20 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 		return e, nil
 
 	case editorStartedMsg:
-		// Start both PTY reading and RPC connection in parallel
-		return e, tea.Batch(e.waitForOutput, e.connectRPC())
+		e.nvim = msg.nvim
+		e.screen = msg.screen
+		e.socketPath = msg.socket
+		return e, tea.Batch(waitForOutput(e.nvim), e.connectRPC(e.program))
 
 	case rpcConnectedMsg:
+		e.rpc = msg.rpc
+		if e.program != nil {
+			e.rpc.SetupQuitSaveIntercept(e.program)
+		}
+		// Ensure left gutter aligns buffer text with panel titles
+		e.rpc.ExecCommand("set foldcolumn=1")
+		// Load splash buffer so neovim starts in a clean state
+		e.rpc.LoadSplashBuffer()
 		return e, nil
 
 	case editorErrorMsg:
@@ -127,15 +168,15 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 
 	case vtOutputMsg:
 		if e.screen != nil {
-			e.screen.write([]byte(msg))
+			e.screen.write(msg.data)
 		}
-		return e, e.waitForOutput
+		return e, waitForOutput(e.nvim)
 
 	case vtClosedMsg:
 		return e, tea.Quit
 
 	case tea.KeyMsg:
-		if e.nvim == nil {
+		if e.nvim == nil || e.showSplash {
 			return e, nil
 		}
 		raw := keyMsgToBytes(msg)
@@ -155,29 +196,123 @@ func (e Editor) View() string {
 	if e.screen == nil {
 		return "Starting Neovim..."
 	}
+	if e.showSplash {
+		return e.renderSplash()
+	}
 	return e.screen.render()
 }
 
-// Mode returns the current Neovim mode.
+func (e Editor) renderSplash() string {
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+
+	var b strings.Builder
+
+	// Shortcuts
+	shortcuts := []struct{ key, desc string }{
+		{"Space Space", "Find note"},
+		{"Space n n", "New note"},
+		{"Space n d", "Daily note"},
+		{"Ctrl+h/l", "Navigate panels"},
+		{"Space q q", "Quit"},
+	}
+
+	// Find the widest key for right-alignment
+	maxKeyWidth := 0
+	for _, s := range shortcuts {
+		if len(s.key) > maxKeyWidth {
+			maxKeyWidth = len(s.key)
+		}
+	}
+
+	// Block width: right-aligned keys + gap + left-aligned descriptions
+	gap := "  "
+	maxDescWidth := 0
+	for _, s := range shortcuts {
+		if len(s.desc) > maxDescWidth {
+			maxDescWidth = len(s.desc)
+		}
+	}
+	blockWidth := maxKeyWidth + len(gap) + maxDescWidth
+
+	// Vertical padding to center
+	totalLines := 2 + len(shortcuts) // title + blank + shortcuts
+	padTop := (e.height - totalLines) / 2
+	if padTop < 1 {
+		padTop = 1
+	}
+	for i := 0; i < padTop; i++ {
+		b.WriteByte('\n')
+	}
+
+	// Title
+	title := accent.Render("Kopr")
+	titlePad := (e.width - lipgloss.Width(title)) / 2
+	if titlePad < 0 {
+		titlePad = 0
+	}
+	b.WriteString(strings.Repeat(" ", titlePad) + title + "\n\n")
+
+	// Render shortcuts: keys right-aligned, descriptions left-aligned
+	blockPad := (e.width - blockWidth) / 2
+	if blockPad < 0 {
+		blockPad = 0
+	}
+
+	for _, s := range shortcuts {
+		keyPad := maxKeyWidth - len(s.key)
+		line := strings.Repeat(" ", blockPad) +
+			strings.Repeat(" ", keyPad) +
+			keyStyle.Render(s.key) +
+			gap +
+			dim.Render(s.desc)
+		b.WriteString(line + "\n")
+	}
+
+	// Fill remaining lines
+	lines := strings.Count(b.String(), "\n")
+	for i := lines; i < e.height; i++ {
+		b.WriteByte('\n')
+	}
+
+	return b.String()
+}
+
 func (e Editor) Mode() NvimMode {
 	return e.mode
 }
 
-// RPC returns the RPC connection for programmatic Neovim control.
 func (e Editor) GetRPC() *RPC {
 	return e.rpc
 }
 
-// OpenFile opens a file in the editor via RPC.
+func (e Editor) ShowSplash() bool {
+	return e.showSplash
+}
+
+func (e *Editor) SetShowSplash(show bool) {
+	e.showSplash = show
+}
+
+func (e *Editor) SetFocused(focused bool) {
+	e.focused = focused
+	if e.screen != nil {
+		e.screen.setShowCursor(focused)
+	}
+}
+
 func (e *Editor) OpenFile(path string) error {
 	if e.rpc == nil {
 		return fmt.Errorf("RPC not connected")
 	}
+	e.showSplash = false
 	return e.rpc.OpenFile(path)
 }
 
 func (e *Editor) Close() {
 	if e.rpc != nil {
+		e.rpc.Quit()
 		e.rpc.Close()
 	}
 	if e.screen != nil {

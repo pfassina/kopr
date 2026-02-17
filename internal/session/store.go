@@ -14,7 +14,7 @@ type Store struct {
 // NewStore creates a store that persists to the given vault directory.
 func NewStore(vaultPath string) *Store {
 	return &Store{
-		path: filepath.Join(vaultPath, ".vimvault", "state.json"),
+		path: filepath.Join(vaultPath, ".kopr", "state.json"),
 	}
 }
 

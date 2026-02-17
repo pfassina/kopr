@@ -17,10 +17,9 @@ type nvimPTY struct {
 func startNvim(width, height int, socketPath, vaultPath string) (*nvimPTY, error) {
 	cmd := exec.Command("nvim",
 		"--listen", socketPath,
-		"--cmd", "set laststatus=0 showtabline=0 cmdheight=1",
 	)
 	cmd.Dir = vaultPath
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = append(os.Environ(), NvimEnv()...)
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Rows: uint16(height),
