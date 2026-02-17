@@ -308,11 +308,34 @@ func (a *App) FollowLink() {
 		a.tree.Refresh()
 	}
 
+	if a.currentFile != "" && a.currentFile != targetPath {
+		a.prevFile = a.currentFile
+	}
 	a.openInEditor(fullPath)
 	a.status.SetFile(targetPath)
 	a.currentFile = targetPath
 	a.setFocus(focusEditor)
 	a.updateBacklinks(targetPath)
+}
+
+// GoBack navigates to the previously opened note.
+func (a *App) GoBack() {
+	if a.prevFile == "" {
+		return
+	}
+
+	fullPath := filepath.Join(a.cfg.VaultPath, a.prevFile)
+	if _, err := os.Stat(fullPath); err != nil {
+		a.prevFile = ""
+		return
+	}
+
+	// Swap current and previous so gb toggles between two notes
+	a.prevFile, a.currentFile = a.currentFile, a.prevFile
+	a.openInEditor(fullPath)
+	a.status.SetFile(a.currentFile)
+	a.setFocus(focusEditor)
+	a.updateBacklinks(a.currentFile)
 }
 
 func (a *App) FormatDocument() {
