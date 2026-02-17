@@ -19,6 +19,9 @@ type Config struct {
 	LeaderTimeout   int // milliseconds
 	NvimMode        string
 	ResetNvimConfig bool
+
+	// AutoFormatOnSave enables Kopr's deterministic Markdown formatter after save.
+	AutoFormatOnSave bool
 }
 
 func Default() Config {
@@ -34,7 +37,8 @@ func Default() Config {
 		ShowInfo:      true,
 		ShowStatus:    true,
 		LeaderKey:     " ",
-		LeaderTimeout: 500,
-		NvimMode:      "managed",
+		LeaderTimeout:    500,
+		NvimMode:         "managed",
+		AutoFormatOnSave: true,
 	}
 }

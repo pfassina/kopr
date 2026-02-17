@@ -36,7 +36,11 @@ func main() {
 
 	flag.Parse()
 
-	cfg.VaultPath = *vault
+	// Normalize vault path: expand ~ and make absolute so Neovim cwd + :w use stable paths.
+	cfg.VaultPath = config.ExpandHome(*vault)
+	if abs, err := filepath.Abs(cfg.VaultPath); err == nil {
+		cfg.VaultPath = abs
+	}
 	cfg.Serve = *serve
 	cfg.Listen = *listen
 	cfg.Theme = *theme
@@ -57,6 +61,9 @@ func main() {
 			os.Exit(0)
 		}
 		cfg.VaultPath = res.VaultPath
+		if abs, err := filepath.Abs(cfg.VaultPath); err == nil {
+			cfg.VaultPath = abs
+		}
 	}
 
 	if err := os.MkdirAll(cfg.VaultPath, 0755); err != nil {

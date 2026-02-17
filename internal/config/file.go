@@ -11,11 +11,12 @@ import (
 // fileConfig mirrors Config with pointer fields so we can distinguish
 // "not set" from zero values when merging TOML.
 type fileConfig struct {
-	VaultPath     *string `toml:"vault_path"`
-	Theme         *string `toml:"theme"`
-	NvimMode      *string `toml:"nvim_mode"`
-	LeaderKey     *string `toml:"leader_key"`
-	LeaderTimeout *int    `toml:"leader_timeout"`
+	VaultPath         *string `toml:"vault_path"`
+	Theme             *string `toml:"theme"`
+	NvimMode          *string `toml:"nvim_mode"`
+	LeaderKey         *string `toml:"leader_key"`
+	LeaderTimeout     *int    `toml:"leader_timeout"`
+	AutoFormatOnSave  *bool   `toml:"auto_format_on_save"`
 }
 
 // ConfigDir returns the kopr config directory, respecting XDG_CONFIG_HOME.
@@ -63,6 +64,9 @@ func LoadFile(cfg *Config) (bool, error) {
 	}
 	if fc.LeaderTimeout != nil {
 		cfg.LeaderTimeout = *fc.LeaderTimeout
+	}
+	if fc.AutoFormatOnSave != nil {
+		cfg.AutoFormatOnSave = *fc.AutoFormatOnSave
 	}
 
 	return true, nil
