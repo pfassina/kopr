@@ -29,8 +29,12 @@ func NewIndexer(db *DB, vaultRoot string) *Indexer {
 func (idx *Indexer) IndexAll() error {
 	// Clear links and hashes so all files get fully re-indexed.
 	// Links are derived data rebuilt from source on each IndexFile call.
-	idx.db.Conn().Exec("DELETE FROM links")
-	idx.db.Conn().Exec("UPDATE notes SET hash = ''")
+	if _, err := idx.db.Conn().Exec("DELETE FROM links"); err != nil {
+		return fmt.Errorf("clear links: %w", err)
+	}
+	if _, err := idx.db.Conn().Exec("UPDATE notes SET hash = ''"); err != nil {
+		return fmt.Errorf("clear hashes: %w", err)
+	}
 
 	return filepath.Walk(idx.vaultRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -111,31 +115,45 @@ func (idx *Indexer) IndexFile(absPath string) error {
 	}
 
 	// Update tags
-	idx.db.ClearNoteTags(noteID)
+	if err := idx.db.ClearNoteTags(noteID); err != nil {
+		return fmt.Errorf("clear note tags: %w", err)
+	}
 	for _, tag := range tags {
 		tagID, err := idx.db.UpsertTag(tag)
 		if err != nil {
-			continue
+			return fmt.Errorf("upsert tag %q: %w", tag, err)
 		}
-		idx.db.LinkNoteTag(noteID, tagID)
+		if err := idx.db.LinkNoteTag(noteID, tagID); err != nil {
+			return fmt.Errorf("link note tag %q: %w", tag, err)
+		}
 	}
 
 	// Update headings
-	idx.db.ClearNoteHeadings(noteID)
+	if err := idx.db.ClearNoteHeadings(noteID); err != nil {
+		return fmt.Errorf("clear note headings: %w", err)
+	}
 	for _, h := range parsed.Headings {
-		idx.db.InsertHeading(noteID, h.Level, h.Text, h.Line)
+		if err := idx.db.InsertHeading(noteID, h.Level, h.Text, h.Line); err != nil {
+			return fmt.Errorf("insert heading %q: %w", h.Text, err)
+		}
 	}
 
 	// Update links (store basenames for name-based resolution)
-	idx.db.ClearNoteLinks(noteID)
+	if err := idx.db.ClearNoteLinks(noteID); err != nil {
+		return fmt.Errorf("clear note links: %w", err)
+	}
 	for _, link := range parsed.WikiLinks {
 		targetPath := markdown.ResolveWikiLinkTarget(link.Target)
 		targetPath = filepath.Base(targetPath) // store only basename
-		idx.db.InsertLink(noteID, targetPath, link.Section, link.Alias, link.Line, link.Col)
+		if err := idx.db.InsertLink(noteID, targetPath, link.Section, link.Alias, link.Line, link.Col); err != nil {
+			return fmt.Errorf("insert link to %q: %w", targetPath, err)
+		}
 	}
 
 	// Resolve link target IDs
-	idx.resolveLinks(noteID)
+	if err := idx.resolveLinks(noteID); err != nil {
+		return fmt.Errorf("resolve links: %w", err)
+	}
 
 	return nil
 }
@@ -160,12 +178,13 @@ func titleFromPath(path string) string {
 }
 
 // resolveLinks attempts to set target_id for links whose target_path (basename) matches a known note.
-func (idx *Indexer) resolveLinks(sourceID int64) {
-	idx.db.Conn().Exec(`
+func (idx *Indexer) resolveLinks(sourceID int64) error {
+	_, err := idx.db.Conn().Exec(`
 		UPDATE links SET target_id = (
 			SELECT id FROM notes WHERE path = links.target_path OR path LIKE '%/' || links.target_path
 		) WHERE source_id = ? AND target_id IS NULL
 	`, sourceID)
+	return err
 }
 
 func slugify(title string) string {

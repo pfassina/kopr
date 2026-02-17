@@ -55,7 +55,7 @@ func ConnectRPC(socketPath string, onMode func(NvimMode)) (*RPC, error) {
 	}
 
 	if err := rpc.setupModeChanged(); err != nil {
-		client.Close()
+		_ = client.Close() // best-effort; we're already failing setup
 		return nil, fmt.Errorf("setup mode events: %w", err)
 	}
 
@@ -63,7 +63,7 @@ func ConnectRPC(socketPath string, onMode func(NvimMode)) (*RPC, error) {
 }
 
 func (r *RPC) setupModeChanged() error {
-	r.client.RegisterHandler("mode_changed", func(args ...interface{}) {
+	if err := r.client.RegisterHandler("mode_changed", func(args ...interface{}) {
 		if len(args) < 2 {
 			return
 		}
@@ -79,7 +79,9 @@ func (r *RPC) setupModeChanged() error {
 		if r.onMode != nil {
 			r.onMode(NvimMode(newMode))
 		}
-	})
+	}); err != nil {
+		return err
+	}
 
 	if err := r.client.Subscribe("mode_changed"); err != nil {
 		return err
@@ -149,7 +151,7 @@ func (r *RPC) InsertText(text string) error {
 // SetupQuitSaveIntercept remaps quit/save commands in neovim to send
 // RPC notifications instead of actually quitting. This keeps the app alive.
 func (r *RPC) SetupQuitSaveIntercept(program *tea.Program) error {
-	r.client.RegisterHandler("kopr:close-note", func(args ...interface{}) {
+	if err := r.client.RegisterHandler("kopr:close-note", func(args ...interface{}) {
 		save := false
 		if len(args) > 0 {
 			if b, ok := args[0].(bool); ok {
@@ -159,13 +161,17 @@ func (r *RPC) SetupQuitSaveIntercept(program *tea.Program) error {
 		if program != nil {
 			program.Send(NoteClosedMsg{Save: save})
 		}
-	})
+	}); err != nil {
+		return err
+	}
 
-	r.client.RegisterHandler("kopr:save-unnamed", func(args ...interface{}) {
+	if err := r.client.RegisterHandler("kopr:save-unnamed", func(args ...interface{}) {
 		if program != nil {
 			program.Send(SaveUnnamedMsg{})
 		}
-	})
+	}); err != nil {
+		return err
+	}
 
 	if err := r.client.Subscribe("kopr:close-note"); err != nil {
 		return err
@@ -218,17 +224,21 @@ func (r *RPC) CursorPosition() (int, int, error) {
 // SetupLinkNavigation maps gf/gb in normal mode to send RPC notifications
 // for following wiki links and navigating back.
 func (r *RPC) SetupLinkNavigation(program *tea.Program) error {
-	r.client.RegisterHandler("kopr:follow-link", func(args ...interface{}) {
+	if err := r.client.RegisterHandler("kopr:follow-link", func(args ...interface{}) {
 		if program != nil {
 			program.Send(FollowLinkMsg{})
 		}
-	})
+	}); err != nil {
+		return err
+	}
 
-	r.client.RegisterHandler("kopr:go-back", func(args ...interface{}) {
+	if err := r.client.RegisterHandler("kopr:go-back", func(args ...interface{}) {
 		if program != nil {
 			program.Send(GoBackMsg{})
 		}
-	})
+	}); err != nil {
+		return err
+	}
 
 	if err := r.client.Subscribe("kopr:follow-link"); err != nil {
 		return err
@@ -280,9 +290,9 @@ func (r *RPC) Quit() {
 		return
 	}
 	// Remove the QuitPre autocmd that normally aborts :q/:wq.
-	r.client.ExecLua("vim.api.nvim_clear_autocmds({event='QuitPre'})", nil)
+	_ = r.client.ExecLua("vim.api.nvim_clear_autocmds({event='QuitPre'})", nil)
 	// Errors are expected here since nvim may close the connection mid-command.
-	r.client.Command("qa!")
+	_ = r.client.Command("qa!")
 }
 
 // Close closes the RPC connection.

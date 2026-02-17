@@ -47,8 +47,12 @@ func TestLoadFile_Partial(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	dir := filepath.Join(tmp, "kopr")
-	os.MkdirAll(dir, 0755)
-	os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`theme = "dracula"`+"\n"), 0644)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`theme = "dracula"`+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg := Default()
 	exists, err := LoadFile(&cfg)
@@ -73,14 +77,18 @@ func TestLoadFile_Full(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	dir := filepath.Join(tmp, "kopr")
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
 	content := `vault_path = "~/docs"
 theme = "nord"
 nvim_mode = "user"
 leader_key = ","
 leader_timeout = 300
 `
-	os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg := Default()
 	exists, err := LoadFile(&cfg)

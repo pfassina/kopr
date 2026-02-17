@@ -93,7 +93,9 @@ func (e Editor) start() tea.Cmd {
 		}
 
 		socketPath := fmt.Sprintf("/tmp/kopr-%d.sock", os.Getpid())
-		os.Remove(socketPath)
+		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+			return editorErrorMsg{fmt.Errorf("remove socket %s: %w", socketPath, err)}
+		}
 
 		nvim, err := startNvim(width, height, socketPath, vaultPath)
 		if err != nil {
@@ -142,8 +144,13 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 			return e, e.start()
 		}
 		if e.nvim != nil {
-			e.nvim.resize(e.width, e.height)
-			e.screen.resize(e.width, e.height)
+			if err := e.nvim.resize(e.width, e.height); err != nil {
+				e.err = err
+				return e, tea.Quit
+			}
+			if e.screen != nil {
+				e.screen.resize(e.width, e.height)
+			}
 		}
 		return e, nil
 
@@ -156,13 +163,25 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 	case rpcConnectedMsg:
 		e.rpc = msg.rpc
 		if e.program != nil {
-			e.rpc.SetupQuitSaveIntercept(e.program)
-			e.rpc.SetupLinkNavigation(e.program)
+			if err := e.rpc.SetupQuitSaveIntercept(e.program); err != nil {
+				e.err = err
+				return e, tea.Quit
+			}
+			if err := e.rpc.SetupLinkNavigation(e.program); err != nil {
+				e.err = err
+				return e, tea.Quit
+			}
 		}
 		// Ensure left gutter aligns buffer text with panel titles
-		e.rpc.ExecCommand("set foldcolumn=1")
+		if err := e.rpc.ExecCommand("set foldcolumn=1"); err != nil {
+			e.err = err
+			return e, tea.Quit
+		}
 		// Load splash buffer so neovim starts in a clean state
-		e.rpc.LoadSplashBuffer()
+		if err := e.rpc.LoadSplashBuffer(); err != nil {
+			e.err = err
+			return e, tea.Quit
+		}
 		return e, nil
 
 	case editorErrorMsg:
@@ -175,7 +194,10 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 
 	case vtOutputMsg:
 		if e.screen != nil {
-			e.screen.write(msg.data)
+			if _, err := e.screen.write(msg.data); err != nil {
+				e.err = err
+				return e, tea.Quit
+			}
 		}
 		return e, waitForOutput(e.nvim)
 
@@ -188,7 +210,10 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 		}
 		raw := keyMsgToBytes(msg)
 		if raw != nil {
-			e.nvim.file.Write(raw)
+			if _, err := e.nvim.file.Write(raw); err != nil {
+				e.err = err
+				return e, tea.Quit
+			}
 		}
 		return e, nil
 	}
@@ -320,12 +345,18 @@ func (e *Editor) OpenFile(path string) error {
 func (e *Editor) Close() {
 	if e.rpc != nil {
 		e.rpc.Quit()
-		e.rpc.Close()
+		if err := e.rpc.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, "fatal: close rpc:", err)
+		}
 	}
 	if e.screen != nil {
-		e.screen.close()
+		if err := e.screen.close(); err != nil {
+			fmt.Fprintln(os.Stderr, "fatal: close vt screen:", err)
+		}
 	}
 	if e.nvim != nil {
-		e.nvim.close()
+		if err := e.nvim.close(); err != nil {
+			fmt.Fprintln(os.Stderr, "fatal: close nvim:", err)
+		}
 	}
 }

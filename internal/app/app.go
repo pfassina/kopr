@@ -27,14 +27,15 @@ const (
 )
 
 type promptAction struct {
-	kind  string // "save", "close", "create-note", "delete-note", "delete-notes", "rename-note"
-	path  string // target file path for delete/rename
+	kind  string   // "save", "close", "create-note", "delete-note", "delete-notes", "rename-note"
+	path  string   // target file path for delete/rename
 	paths []string // multiple paths for multi-delete
 }
 
 type App struct {
 	cfg      config.Config
 	editor   editor.Editor
+	program  *tea.Program
 	tree     panel.Tree
 	info     panel.Info
 	status   panel.Status
@@ -124,6 +125,7 @@ func New(cfg config.Config) App {
 }
 
 func (a *App) SetProgram(p *tea.Program) {
+	a.program = p
 	a.editor.SetProgram(p)
 }
 
@@ -193,7 +195,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Try leader key system (works from editor and side panels)
 		// Skip when tree help is showing so any key dismisses help first
-		if !(a.focused == focusTree && a.tree.ShowingHelp()) {
+		if a.focused != focusTree || !a.tree.ShowingHelp() {
 			if consumed, cmd := a.handleLeaderKey(msg.String()); consumed {
 				a.updateWhichKey()
 				return a, cmd
@@ -209,6 +211,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.handleLeaderTimeout()
 		a.updateWhichKey()
 		return a, nil
+
+	case fatalErrorMsg:
+		return a, tea.Batch(tea.Printf("fatal: %v\n", msg.err), tea.Quit)
 
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
@@ -304,15 +309,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.handlePromptCancelled()
 
 	case indexInitDoneMsg:
+		if msg.err != nil {
+			// Fail fast and loud: indexing is a core feature.
+			return a, tea.Batch(tea.Printf("fatal: indexing failed: %v\n", msg.err), tea.Quit)
+		}
 		// Index is ready - start file watcher
 		if a.indexer != nil {
 			w, err := index.NewWatcher(a.indexer, a.cfg.VaultPath, func() {
 				a.tree.Refresh()
+			}, func(err error) {
+				if a.program != nil {
+					a.program.Send(fatalErrorMsg{err: err})
+				}
 			})
-			if err == nil {
-				a.watcher = w
-				go w.Start()
+			if err != nil {
+				return a, tea.Batch(tea.Printf("fatal: watcher init failed: %v\n", err), tea.Quit)
 			}
+			a.watcher = w
+			go w.Start()
 		}
 		return a, nil
 	}
@@ -424,15 +438,21 @@ func (a *App) Close() {
 			InfoWidth: a.cfg.InfoWidth,
 			Theme:     a.theme.Name,
 		}
-		a.store.Save(state)
+		if err := a.store.Save(state); err != nil {
+			fmt.Fprintln(os.Stderr, "fatal: save session state:", err)
+		}
 	}
 
 	a.editor.Close()
 	if a.watcher != nil {
-		a.watcher.Stop()
+		if err := a.watcher.Stop(); err != nil {
+			fmt.Fprintln(os.Stderr, "fatal: stop watcher:", err)
+		}
 	}
 	if a.db != nil {
-		a.db.Close()
+		if err := a.db.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, "fatal: close db:", err)
+		}
 	}
 }
 
@@ -453,7 +473,9 @@ func (a *App) handleNoteClose(save bool) tea.Cmd {
 			return nil
 		}
 		// Named buffer — save, then go to splash
-		rpc.ExecCommand("w")
+		if err := rpc.ExecCommand("w"); err != nil {
+			return tea.Batch(tea.Printf("fatal: nvim write failed: %v\n", err), tea.Quit)
+		}
 	}
 
 	a.showSplash()
@@ -464,7 +486,12 @@ func (a *App) handleNoteClose(save bool) tea.Cmd {
 func (a *App) showSplash() {
 	rpc := a.editor.GetRPC()
 	if rpc != nil {
-		rpc.LoadSplashBuffer()
+		if err := rpc.LoadSplashBuffer(); err != nil {
+			if a.program != nil {
+				a.program.Send(fatalErrorMsg{err: err})
+			}
+			return
+		}
 	}
 	a.editor.SetShowSplash(true)
 	a.status.SetFile("")
@@ -476,7 +503,12 @@ func (a *App) showSplash() {
 
 // openInEditor opens a file and recalculates layout since splash is dismissed.
 func (a *App) openInEditor(path string) {
-	a.editor.OpenFile(path)
+	if err := a.editor.OpenFile(path); err != nil {
+		if a.program != nil {
+			a.program.Send(fatalErrorMsg{err: err})
+		}
+		return
+	}
 	a.updateLayout()
 }
 
@@ -550,11 +582,19 @@ func (a *App) handleSaveAs(value string, closeAfter bool) tea.Cmd {
 	}
 
 	// Make the buffer modifiable, set name, and write
-	rpc.ExecCommand("setlocal modifiable")
-	rpc.SetBufferName(fullPath)
+	if err := rpc.ExecCommand("setlocal modifiable"); err != nil {
+		return fatalCmd(err)
+	}
+	if err := rpc.SetBufferName(fullPath); err != nil {
+		return fatalCmd(err)
+	}
 	// Remove BufWriteCmd interference by setting buftype back to normal
-	rpc.ExecCommand("setlocal buftype=")
-	rpc.WriteBuffer()
+	if err := rpc.ExecCommand("setlocal buftype="); err != nil {
+		return fatalCmd(err)
+	}
+	if err := rpc.WriteBuffer(); err != nil {
+		return fatalCmd(err)
+	}
 
 	a.status.SetFile(relPath)
 	a.currentFile = relPath
@@ -573,7 +613,9 @@ func (a *App) handleCreateNote(name string) tea.Cmd {
 	// Directory creation: name ends with /
 	if strings.HasSuffix(name, "/") {
 		dirPath := strings.TrimSuffix(name, "/")
-		a.vault.CreateDir(dirPath)
+		if err := a.vault.CreateDir(dirPath); err != nil {
+			return fatalCmd(err)
+		}
 		a.tree.Refresh()
 		return nil
 	}
@@ -621,8 +663,12 @@ func (a *App) handlePaste(msg panel.TreePasteMsg) tea.Cmd {
 				fullPath := filepath.Join(a.cfg.VaultPath, newRel)
 				rpc := a.editor.GetRPC()
 				if rpc != nil {
-					rpc.SetBufferName(fullPath)
-					rpc.WriteBuffer()
+					if err := rpc.SetBufferName(fullPath); err != nil {
+						return fatalCmd(err)
+					}
+					if err := rpc.WriteBuffer(); err != nil {
+						return fatalCmd(err)
+					}
 				}
 				a.status.SetFile(newRel)
 				a.currentFile = newRel
@@ -660,7 +706,9 @@ func (a *App) handleDeleteNote(confirmation, relPath string) tea.Cmd {
 		a.showSplash()
 	}
 
-	a.vault.DeleteNote(relPath)
+	if err := a.vault.DeleteNote(relPath); err != nil {
+		return fatalCmd(err)
+	}
 	a.tree.ClearSelected()
 	a.tree.Refresh()
 	return nil
@@ -676,7 +724,9 @@ func (a *App) handleDeleteNotes(confirmation string, paths []string) tea.Cmd {
 		if a.currentFile == p {
 			a.showSplash()
 		}
-		a.vault.DeleteNote(p)
+		if err := a.vault.DeleteNote(p); err != nil {
+			return fatalCmd(err)
+		}
 	}
 
 	a.tree.ClearSelected()
@@ -725,7 +775,9 @@ func (a *App) handleRenameNote(newName, oldPath string) tea.Cmd {
 	if oldBasename != newBasename {
 		for _, srcPath := range backlinkPaths {
 			absPath := filepath.Join(a.cfg.VaultPath, srcPath)
-			vault.RewriteLinksInNote(absPath, oldBasename, newBasename)
+			if _, err := vault.RewriteLinksInNote(absPath, oldBasename, newBasename); err != nil {
+				return fatalCmd(err)
+			}
 		}
 	}
 
@@ -734,8 +786,12 @@ func (a *App) handleRenameNote(newName, oldPath string) tea.Cmd {
 		fullPath := filepath.Join(a.cfg.VaultPath, newRel)
 		rpc := a.editor.GetRPC()
 		if rpc != nil {
-			rpc.SetBufferName(fullPath)
-			rpc.WriteBuffer()
+			if err := rpc.SetBufferName(fullPath); err != nil {
+				return fatalCmd(err)
+			}
+			if err := rpc.WriteBuffer(); err != nil {
+				return fatalCmd(err)
+			}
 		}
 		a.status.SetFile(newRel)
 		a.currentFile = newRel
@@ -939,5 +995,9 @@ func (a *App) checkUniqueBasename(relPath string) string {
 }
 
 func ensureDir(path string) {
-	os.MkdirAll(path, 0755)
+	if err := os.MkdirAll(path, 0755); err != nil {
+		// Called during startup; there is no Bubble Tea program to report to yet.
+		// Crash loudly rather than continuing in a corrupted state.
+		panic(err)
+	}
 }

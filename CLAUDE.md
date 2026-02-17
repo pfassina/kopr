@@ -70,8 +70,8 @@ Panels communicate with `App` via typed Bubble Tea messages (e.g., `FileSelected
 
 ## Coding Conventions
 
+- **Fail fast, loud errors (project policy)** — avoid silent error handling. In production code, check and propagate errors. If an error is intentionally ignored, use an explicit discard (`_ = err`) with a comment explaining why.
 - **CGO disabled** — `modernc.org/sqlite` is a pure-Go SQLite driver. `CGO_ENABLED=0` throughout.
 - **Value receivers** for `Update`/`View`, **pointer receivers** for mutating setters.
 - **XDG-aware paths** — config at `~/.config/kopr/`, data at `~/.local/share/kopr/`. Vault metadata at `<vault>/.kopr/`.
 - **Tests** use stdlib `testing` only — no external frameworks. Common patterns: `t.TempDir()` for filesystem isolation, `index.OpenMemory()` for in-memory SQLite, `t.Setenv()` for XDG overrides, table-driven tests.
-- **Errors from non-critical ops** (indexing, RPC) are silently dropped; the app continues running.

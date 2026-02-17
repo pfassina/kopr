@@ -69,7 +69,9 @@ func Open(path string) (*DB, error) {
 	}
 
 	if _, err := conn.Exec(schema); err != nil {
-		conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			return nil, fmt.Errorf("init schema: %w (close: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
@@ -83,8 +85,10 @@ func OpenMemory() (*DB, error) {
 		return nil, err
 	}
 	if _, err := conn.Exec(schema); err != nil {
-		conn.Close()
-		return nil, err
+		if closeErr := conn.Close(); closeErr != nil {
+			return nil, fmt.Errorf("init schema: %w (close: %v)", err, closeErr)
+		}
+		return nil, fmt.Errorf("init schema: %w", err)
 	}
 	return &DB{conn: conn}, nil
 }
@@ -132,7 +136,8 @@ func (db *DB) UpdateFTS(noteID int64, title, content, tags, headings string) err
 	// Delete old FTS entry
 	_, err := db.conn.Exec("INSERT INTO notes_fts(notes_fts, rowid, title, content, tags, headings) VALUES('delete', ?, '', '', '', '')", noteID)
 	if err != nil {
-		// Ignore delete errors for new entries
+		// Ignore delete errors for new entries; the insert below will populate the row.
+		_ = err
 	}
 
 	// Insert new FTS entry

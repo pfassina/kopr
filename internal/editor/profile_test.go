@@ -58,9 +58,13 @@ func TestEnsureProfile_Managed_DoesNotOverwrite(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	dir := filepath.Join(tmp, "kopr")
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
 	custom := []byte("-- my custom config\n")
-	os.WriteFile(filepath.Join(dir, "init.lua"), custom, 0644)
+	if err := os.WriteFile(filepath.Join(dir, "init.lua"), custom, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := EnsureProfile(ProfileManaged); err != nil {
 		t.Fatal(err)
@@ -87,8 +91,12 @@ func TestResetProfile_Overwrites(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	dir := filepath.Join(tmp, "kopr")
-	os.MkdirAll(dir, 0755)
-	os.WriteFile(filepath.Join(dir, "init.lua"), []byte("-- custom"), 0644)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "init.lua"), []byte("-- custom"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := ResetProfile(); err != nil {
 		t.Fatal(err)
