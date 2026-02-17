@@ -5,19 +5,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development Commands
 
 ```bash
-make build              # go build -ldflags="-s -w" -o bin/kopr ./cmd/kopr
-make run                # build then run (pass ARGS="--serve" etc.)
-make test               # go test ./...
-make test-integration   # go test -tags integration ./...
-make lint               # golangci-lint run ./...
-make clean              # rm -rf bin/
-make docker             # docker build -t kopr .
+# Nix dev shell (recommended)
+nix develop
 
-# Run a single test
-go test ./internal/index/... -run TestSearchNotes
+# Build
+make build
 
-# Run a specific package's tests
-go test ./internal/panel/...
+# Run
+make run
+# or: make run ARGS="--vault ~/notes"
+
+# Tests
+make test
+make test-integration
+
+# Lint
+go env GOPATH  # sanity check you’re in the dev shell
+make lint
+
+# Docker
+make docker
+
+# Focused tests
+# go test ./internal/index/... -run TestSearchNotes
+# go test ./internal/panel/...
 ```
 
 Nix dev shell (`nix develop`) provides: go, gopls, delve, golangci-lint, neovim, sqlite.
@@ -27,7 +38,7 @@ Nix dev shell (`nix develop`) provides: go, gopls, delve, golangci-lint, neovim,
 Kopr is a terminal-first knowledge management system that embeds Neovim inside a Bubble Tea TUI. Notes are plain Markdown files in a user-defined vault directory.
 
 ### Dual-mode operation
-- **Local mode** (`cmd/kopr/main.go` → `runLocal()`): creates a `tea.Program` directly
+- **Local mode**: runs a `tea.Program` directly in the user’s terminal.
 - **SSH mode** (`--serve` flag): starts a Wish SSH server (`internal/ssh`), each session gets its own `app.App`
 
 ### Core data flow
@@ -48,8 +59,8 @@ SSH / Local Terminal
 - **`internal/app`** — Central `App` model owns all subcomponents. Leader key state machine in `keymap.go`. Layout computed in `layout.go` (three-column: tree | editor | info).
 - **`internal/editor`** — Wraps Neovim: spawns it in a PTY (`pty.go`), reads output into `charmbracelet/x/vt` terminal emulator (`vt.go`), controls via msgpack RPC (`rpc.go`). Key events are converted to PTY bytes in `input.go`. Managed nvim config via `profile.go`.
 - **`internal/index`** — SQLite with FTS5 for full-text search. Hash-based change detection in `indexer.go`. `fsnotify` watcher for incremental reindex.
-- **`internal/vault`** — File CRUD, daily/inbox note creation, template expansion.
-- **`internal/panel`** — Tree browser, info/backlinks, finder (fuzzy search overlay), prompt, status bar, which-key popup. All implement Bubble Tea's `Init/Update/View`.
+- **`internal/vault`** — File CRUD, daily/inbox note creation, template expansion, and vault-wide wiki-link rewriting helpers (used on rename).
+- **`internal/panel`** — Tree browser (multi-select + clipboard cut/copy/paste), info/backlinks, finder (fuzzy search overlay), prompt (incl. confirm), status bar (mode/file/errors/clipboard), which-key popup. All implement Bubble Tea's `Init/Update/View`.
 - **`internal/config`** — TOML config at `~/.config/kopr/config.toml` (XDG-aware). First-run setup wizard in `setup.go`.
 - **`internal/session`** — Persists panel state to `<vault>/.kopr/state.json`.
 - **`internal/markdown`** — Goldmark-based parser: frontmatter, headings, wiki links. Deterministic CommonMark formatter.

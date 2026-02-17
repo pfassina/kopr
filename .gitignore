@@ -1,5 +1,5 @@
 bin/
-kopr
+/kopr
 *.db
 *.db-journal
 *.db-wal
