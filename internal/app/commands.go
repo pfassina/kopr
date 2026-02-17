@@ -1,11 +1,13 @@
 package app
 
 import (
+	"fmt"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/yourusername/vimvault/internal/panel"
+	"github.com/pfassina/kopr/internal/panel"
 )
 
 // indexInitDoneMsg signals indexing is complete.
@@ -65,11 +67,32 @@ func (a *App) searchNotes(query string) []panel.FinderItem {
 // handleFinderResult handles a file selection from the finder.
 func (a *App) handleFinderResult(path string) tea.Cmd {
 	fullPath := filepath.Join(a.cfg.VaultPath, path)
-	a.editor.OpenFile(fullPath)
+	a.openInEditor(fullPath)
 	a.status.SetFile(path)
+	a.currentFile = path
 	a.focused = focusEditor
 	a.updateBacklinks(path)
 	return nil
+}
+
+// createNoteFromFinder creates a new note from a finder query string.
+func (a *App) createNoteFromFinder(name string) {
+	// Sanitize: add .md extension if missing
+	relPath := name
+	if !strings.HasSuffix(relPath, ".md") {
+		relPath += ".md"
+	}
+
+	content := fmt.Sprintf("---\ntitle: %s\n---\n\n", name)
+	fullPath, err := a.vault.CreateNote(relPath, content)
+	if err != nil {
+		return
+	}
+
+	a.editor.OpenFile(fullPath)
+	a.status.SetFile(relPath)
+	a.currentFile = relPath
+	a.tree.Refresh()
 }
 
 // updateBacklinks refreshes the backlinks panel for the given note path.
@@ -84,13 +107,13 @@ func (a *App) updateBacklinks(relPath string) {
 		return
 	}
 
-	lines := make([]string, len(backlinks))
+	items := make([]panel.InfoItem, len(backlinks))
 	for i, bl := range backlinks {
 		title := bl.SourceTitle
 		if title == "" {
 			title = bl.SourcePath
 		}
-		lines[i] = title
+		items[i] = panel.InfoItem{Title: title, Path: bl.SourcePath}
 	}
-	a.info.SetBacklinks(lines)
+	a.info.SetBacklinks(items)
 }

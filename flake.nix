@@ -1,5 +1,5 @@
 {
-  description = "VimVault - terminal-first knowledge management";
+  description = "Kopr - terminal-first knowledge management";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -24,7 +24,7 @@
 
           shellHook = ''
             export CGO_ENABLED=0
-            echo "VimVault dev shell ready"
+            echo "Kopr dev shell ready"
           '';
         };
       }

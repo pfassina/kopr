@@ -9,8 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/yourusername/vimvault/internal/editor"
-	"github.com/yourusername/vimvault/internal/markdown"
+	"github.com/pfassina/kopr/internal/editor"
+	"github.com/pfassina/kopr/internal/markdown"
 )
 
 // Binding represents a leader key binding.
@@ -54,6 +54,10 @@ func newBindings() map[string]*Binding {
 		"n": {
 			Key: "n", Label: "+note",
 			Children: map[string]*Binding{
+				"n": {Key: "n", Label: "New note", Action: func(a *App) tea.Cmd {
+					a.CreateBlankNote()
+					return nil
+				}},
 				"d": {Key: "d", Label: "Daily note", Action: func(a *App) tea.Cmd {
 					a.CreateDailyNote()
 					return nil
@@ -101,6 +105,15 @@ func newBindings() map[string]*Binding {
 				}},
 			},
 		},
+		"q": {
+			Key: "q", Label: "+quit",
+			Children: map[string]*Binding{
+				"q": {Key: "q", Label: "Quit Kopr", Action: func(a *App) tea.Cmd {
+					a.Close()
+					return tea.Quit
+				}},
+			},
+		},
 		"m": {
 			Key: "m", Label: "+markdown",
 			Children: map[string]*Binding{
@@ -126,8 +139,8 @@ func (a *App) handleLeaderKey(key string) (consumed bool, cmd tea.Cmd) {
 		if key != " " {
 			return false, nil
 		}
-		// Only intercept when Neovim is in normal mode
-		if a.editor.Mode() != editor.ModeNormal {
+		// Only check Neovim mode when editor is focused
+		if a.focused == focusEditor && a.editor.Mode() != editor.ModeNormal {
 			return false, nil
 		}
 		a.leader.active = true
@@ -188,14 +201,27 @@ func (a *App) ToggleFinder() {
 	}
 }
 
+func (a *App) CreateBlankNote() {
+	rpc := a.editor.GetRPC()
+	if rpc == nil {
+		return
+	}
+	rpc.NewBuffer()
+	a.editor.SetShowSplash(false)
+	a.currentFile = ""
+	a.status.SetFile("")
+	a.updateLayout()
+}
+
 func (a *App) CreateDailyNote() {
 	path, err := a.vault.CreateDailyNote()
 	if err != nil {
 		return
 	}
-	a.editor.OpenFile(path)
+	a.openInEditor(path)
 	rel, _ := filepath.Rel(a.cfg.VaultPath, path)
 	a.status.SetFile(rel)
+	a.currentFile = rel
 	a.tree.Refresh()
 }
 
@@ -204,9 +230,10 @@ func (a *App) CreateInboxNote() {
 	if err != nil {
 		return
 	}
-	a.editor.OpenFile(path)
+	a.openInEditor(path)
 	rel, _ := filepath.Rel(a.cfg.VaultPath, path)
 	a.status.SetFile(rel)
+	a.currentFile = rel
 	a.tree.Refresh()
 }
 
@@ -221,9 +248,10 @@ func (a *App) InsertTemplate() {
 		if err != nil {
 			return
 		}
-		a.editor.OpenFile(path)
+		a.openInEditor(path)
 		rel, _ := filepath.Rel(a.cfg.VaultPath, path)
 		a.status.SetFile(rel)
+		a.currentFile = rel
 		a.tree.Refresh()
 	}
 }

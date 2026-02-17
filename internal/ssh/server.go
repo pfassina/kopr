@@ -10,7 +10,7 @@ import (
 	bts "github.com/charmbracelet/wish/bubbletea"
 	"github.com/charmbracelet/wish/logging"
 
-	"github.com/yourusername/vimvault/internal/config"
+	"github.com/pfassina/kopr/internal/config"
 )
 
 // Server wraps a Wish SSH server.
@@ -21,7 +21,7 @@ type Server struct {
 
 // New creates a new SSH server.
 func New(cfg config.Config) (*Server, error) {
-	hostKeyPath := filepath.Join(cfg.VaultPath, ".vimvault", "ssh_host_key")
+	hostKeyPath := filepath.Join(cfg.VaultPath, ".kopr", "ssh_host_key")
 
 	s, err := wish.NewServer(
 		wish.WithAddress(cfg.Listen),

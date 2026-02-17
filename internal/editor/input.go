@@ -5,11 +5,29 @@ import tea "github.com/charmbracelet/bubbletea"
 // keyMsgToBytes converts a Bubble Tea key message back to raw terminal
 // escape sequences suitable for writing to a PTY.
 func keyMsgToBytes(msg tea.KeyMsg) []byte {
-	// Alt-modified keys get ESC prefix
+	// Alt-modified keys: use xterm modifier encoding where possible
+	// (modifier 3 = Alt). Avoids the ESC-prefix form which nvim
+	// misinterprets as ESC + key.
 	if msg.Alt {
 		switch msg.Type {
 		case tea.KeyRunes:
 			return append([]byte{0x1b}, []byte(string(msg.Runes))...)
+		case tea.KeyUp:
+			return []byte("\x1b[1;3A")
+		case tea.KeyDown:
+			return []byte("\x1b[1;3B")
+		case tea.KeyRight:
+			return []byte("\x1b[1;3C")
+		case tea.KeyLeft:
+			return []byte("\x1b[1;3D")
+		case tea.KeyHome:
+			return []byte("\x1b[1;3H")
+		case tea.KeyEnd:
+			return []byte("\x1b[1;3F")
+		case tea.KeyDelete:
+			return []byte("\x1b[3;3~")
+		case tea.KeyBackspace:
+			return []byte{0x1b, 0x7f}
 		default:
 			inner := keyMsgToBytes(tea.KeyMsg{Type: msg.Type, Runes: msg.Runes})
 			if inner != nil {

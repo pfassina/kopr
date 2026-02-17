@@ -39,7 +39,7 @@ func (v *Vault) ListEntries() ([]Entry, error) {
 			return nil
 		}
 
-		// Skip hidden files/directories and .vimvault
+		// Skip hidden files/directories and .kopr
 		name := filepath.Base(path)
 		if strings.HasPrefix(name, ".") {
 			if info.IsDir() {
@@ -60,11 +60,7 @@ func (v *Vault) ListEntries() ([]Entry, error) {
 	})
 
 	sort.Slice(entries, func(i, j int) bool {
-		// Directories before files at same depth
-		if entries[i].IsDir != entries[j].IsDir {
-			return entries[i].IsDir
-		}
-		return entries[i].Path < entries[j].Path
+		return entryLess(entries[i], entries[j])
 	})
 
 	return entries, err
@@ -84,4 +80,45 @@ func (v *Vault) ListNotes() ([]Entry, error) {
 		}
 	}
 	return notes, nil
+}
+
+// entryLess implements hierarchical tree ordering: within each directory,
+// subdirectories come before files, both sorted alphabetically.
+func entryLess(a, b Entry) bool {
+	// If one is a parent directory of the other, parent comes first
+	if a.IsDir && strings.HasPrefix(b.Path, a.Path+string(filepath.Separator)) {
+		return true
+	}
+	if b.IsDir && strings.HasPrefix(a.Path, b.Path+string(filepath.Separator)) {
+		return false
+	}
+
+	// Compare by directory segments to group siblings
+	aParts := strings.Split(a.Path, string(filepath.Separator))
+	bParts := strings.Split(b.Path, string(filepath.Separator))
+
+	minLen := len(aParts)
+	if len(bParts) < minLen {
+		minLen = len(bParts)
+	}
+
+	for i := 0; i < minLen; i++ {
+		if aParts[i] == bParts[i] {
+			continue
+		}
+
+		// At this level, determine if either entry is a file at this depth
+		aIsFileHere := !a.IsDir && i == len(aParts)-1
+		bIsFileHere := !b.IsDir && i == len(bParts)-1
+
+		// Dirs before files at the same level
+		if aIsFileHere != bIsFileHere {
+			return !aIsFileHere
+		}
+
+		return strings.ToLower(aParts[i]) < strings.ToLower(bParts[i])
+	}
+
+	// Shorter path (directory) comes before longer path (its contents)
+	return len(aParts) < len(bParts)
 }

@@ -21,6 +21,11 @@ type FinderResultMsg struct {
 	Path string
 }
 
+// FinderCreateMsg is sent when the user wants to create a new note.
+type FinderCreateMsg struct {
+	Name string
+}
+
 // FinderClosedMsg is sent when the finder is dismissed.
 type FinderClosedMsg struct{}
 
@@ -91,6 +96,14 @@ func (f Finder) Update(msg tea.Msg) (Finder, tea.Cmd) {
 				f.visible = false
 				return f, func() tea.Msg {
 					return FinderResultMsg{Path: item.Path}
+				}
+			}
+			// No results — create a new note with the query as name
+			query := strings.TrimSpace(f.input.Value())
+			if query != "" {
+				f.visible = false
+				return f, func() tea.Msg {
+					return FinderCreateMsg{Name: query}
 				}
 			}
 			return f, nil

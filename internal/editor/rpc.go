@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/neovim/go-client/nvim"
 )
 
@@ -86,7 +87,7 @@ func (r *RPC) setupModeChanged() error {
 
 	cid := r.client.ChannelID()
 	_, err := r.client.Exec(fmt.Sprintf(`
-		augroup VimVaultMode
+		augroup KoprMode
 			autocmd!
 			autocmd ModeChanged * call rpcnotify(%d, 'mode_changed', v:event.old_mode, v:event.new_mode)
 		augroup END
@@ -143,6 +144,99 @@ func (r *RPC) FormatBuffer() error {
 func (r *RPC) InsertText(text string) error {
 	_, err := r.client.Input("i" + text)
 	return err
+}
+
+// SetupQuitSaveIntercept remaps quit/save commands in neovim to send
+// RPC notifications instead of actually quitting. This keeps the app alive.
+func (r *RPC) SetupQuitSaveIntercept(program *tea.Program) error {
+	r.client.RegisterHandler("kopr:close-note", func(args ...interface{}) {
+		save := false
+		if len(args) > 0 {
+			if b, ok := args[0].(bool); ok {
+				save = b
+			}
+		}
+		if program != nil {
+			program.Send(NoteClosedMsg{Save: save})
+		}
+	})
+
+	r.client.RegisterHandler("kopr:save-unnamed", func(args ...interface{}) {
+		if program != nil {
+			program.Send(SaveUnnamedMsg{})
+		}
+	})
+
+	if err := r.client.Subscribe("kopr:close-note"); err != nil {
+		return err
+	}
+	if err := r.client.Subscribe("kopr:save-unnamed"); err != nil {
+		return err
+	}
+
+	cid := r.client.ChannelID()
+	lua := fmt.Sprintf(`
+local chan = %d
+
+-- Intercept all quit commands via QuitPre autocmd.
+-- Throwing an error from QuitPre aborts the :q/:wq/:qa etc.
+-- For :wq on named files, the write has already happened before QuitPre fires.
+vim.api.nvim_create_autocmd('QuitPre', {
+  callback = function()
+    vim.rpcnotify(chan, 'kopr:close-note', false)
+    error('Kopr')
+  end,
+})
+
+-- ZZ = save and close note, ZQ = discard and close note
+vim.keymap.set('n', 'ZZ', function()
+  vim.rpcnotify(chan, 'kopr:close-note', true)
+end, {noremap=true})
+vim.keymap.set('n', 'ZQ', function()
+  vim.rpcnotify(chan, 'kopr:close-note', false)
+end, {noremap=true})
+
+-- Intercept :w on unnamed buffers via cnoreabbrev.
+-- Uses single quotes in the Vimscript ternary to avoid escaping issues.
+vim.cmd([[cnoreabbrev <expr> w getcmdtype()==':' && getcmdline()=='w' && bufname()=='' ? 'lua vim.rpcnotify(]] .. chan .. [[, "kopr:save-unnamed")' : 'w']])
+`, cid)
+
+	return r.client.ExecLua(lua, nil)
+}
+
+// SetBufferName sets the name of the current buffer.
+func (r *RPC) SetBufferName(name string) error {
+	buf, err := r.client.CurrentBuffer()
+	if err != nil {
+		return err
+	}
+	return r.client.SetBufferName(buf, name)
+}
+
+// WriteBuffer writes the current buffer to disk.
+func (r *RPC) WriteBuffer() error {
+	return r.client.Command("w!")
+}
+
+// NewBuffer creates a new empty editable buffer.
+func (r *RPC) NewBuffer() error {
+	return r.client.Command("enew!")
+}
+
+// LoadSplashBuffer creates a scratch buffer for the splash screen.
+func (r *RPC) LoadSplashBuffer() error {
+	return r.client.Command("enew! | setlocal buftype=nofile bufhidden=wipe nomodifiable noswapfile")
+}
+
+// Quit tells Neovim to exit by clearing the quit intercept and running qa!.
+func (r *RPC) Quit() {
+	if r.client == nil {
+		return
+	}
+	// Remove the QuitPre autocmd that normally aborts :q/:wq.
+	r.client.ExecLua("vim.api.nvim_clear_autocmds({event='QuitPre'})", nil)
+	// Errors are expected here since nvim may close the connection mid-command.
+	r.client.Command("qa!")
 }
 
 // Close closes the RPC connection.
