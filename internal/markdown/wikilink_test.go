@@ -68,3 +68,93 @@ func TestExtractWikiLinks(t *testing.T) {
 		})
 	}
 }
+
+func TestWikiLinkAt(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		line  int
+		col   int
+		want  string // expected target, "" if no link expected
+	}{
+		{
+			name:  "cursor on link target",
+			input: "See [[my note]] for details",
+			line:  1, col: 8,
+			want: "my note",
+		},
+		{
+			name:  "cursor on opening brackets",
+			input: "See [[my note]] for details",
+			line:  1, col: 4,
+			want: "my note",
+		},
+		{
+			name:  "cursor on closing brackets",
+			input: "See [[my note]] for details",
+			line:  1, col: 14,
+			want: "my note",
+		},
+		{
+			name:  "cursor before link",
+			input: "See [[my note]] for details",
+			line:  1, col: 3,
+			want: "",
+		},
+		{
+			name:  "cursor after link",
+			input: "See [[my note]] for details",
+			line:  1, col: 15,
+			want: "",
+		},
+		{
+			name:  "second link on same line",
+			input: "Link [[a]] and [[b]]",
+			line:  1, col: 17,
+			want: "b",
+		},
+		{
+			name:  "link on second line",
+			input: "first line\nSee [[note]]",
+			line:  2, col: 6,
+			want: "note",
+		},
+		{
+			name:  "wrong line",
+			input: "See [[note]]",
+			line:  2, col: 5,
+			want: "",
+		},
+		{
+			name:  "no links",
+			input: "No links here",
+			line:  1, col: 5,
+			want: "",
+		},
+		{
+			name:  "link with alias",
+			input: "Click [[note|display text]]",
+			line:  1, col: 10,
+			want: "note",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			links := ExtractWikiLinks([]byte(tt.input))
+			got := WikiLinkAt(links, tt.line, tt.col)
+			if tt.want == "" {
+				if got != nil {
+					t.Errorf("expected no link, got target=%q", got.Target)
+				}
+			} else {
+				if got == nil {
+					t.Fatalf("expected link with target=%q, got nil", tt.want)
+				}
+				if got.Target != tt.want {
+					t.Errorf("target: got %q, want %q", got.Target, tt.want)
+				}
+			}
+		})
+	}
+}
