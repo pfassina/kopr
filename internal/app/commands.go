@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -66,12 +65,8 @@ func (a *App) searchNotes(query string) []panel.FinderItem {
 
 // handleFinderResult handles a file selection from the finder.
 func (a *App) handleFinderResult(path string) tea.Cmd {
-	fullPath := filepath.Join(a.cfg.VaultPath, path)
-	a.openInEditor(fullPath)
-	a.status.SetFile(path)
-	a.currentFile = path
+	a.navigateTo(path)
 	a.focused = focusEditor
-	a.updateBacklinks(path)
 	return nil
 }
 

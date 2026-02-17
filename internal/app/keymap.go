@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -254,6 +255,76 @@ func (a *App) InsertTemplate() {
 		a.currentFile = rel
 		a.tree.Refresh()
 	}
+}
+
+// FollowLink navigates to the wiki link under the cursor.
+func (a *App) FollowLink() {
+	rpc := a.editor.GetRPC()
+	if rpc == nil {
+		return
+	}
+
+	// Get cursor position (line is 1-based, col is 0-based)
+	line, col, err := rpc.CursorPosition()
+	if err != nil {
+		return
+	}
+
+	// Get buffer content
+	content, err := rpc.BufferContent()
+	if err != nil {
+		return
+	}
+
+	// Join lines into single content block
+	var buf bytes.Buffer
+	for i, l := range content {
+		buf.Write(l)
+		if i < len(content)-1 {
+			buf.WriteByte('\n')
+		}
+	}
+
+	// Find wiki links and check if cursor is on one
+	links := markdown.ExtractWikiLinks(buf.Bytes())
+	link := markdown.WikiLinkAt(links, line, col)
+	if link == nil || link.Target == "" {
+		return
+	}
+
+	// Resolve the link target to a file path
+	targetPath := markdown.ResolveWikiLinkTarget(link.Target)
+
+	// Create the target note if it doesn't exist
+	if _, err := os.Stat(filepath.Join(a.cfg.VaultPath, targetPath)); err != nil {
+		frontmatter := fmt.Sprintf("---\ntitle: %s\n---\n\n", link.Target)
+		if _, err := a.vault.CreateNote(targetPath, frontmatter); err != nil {
+			return
+		}
+		a.tree.Refresh()
+	}
+
+	a.navigateTo(targetPath)
+	a.setFocus(focusEditor)
+}
+
+// GoBack navigates to the previously opened note.
+func (a *App) GoBack() {
+	if a.prevFile == "" {
+		return
+	}
+
+	if _, err := os.Stat(filepath.Join(a.cfg.VaultPath, a.prevFile)); err != nil {
+		a.prevFile = ""
+		return
+	}
+
+	// Swap so gb toggles between two notes, then navigate
+	target := a.prevFile
+	a.prevFile = a.currentFile
+	a.currentFile = "" // prevent navigateTo from overwriting prevFile
+	a.navigateTo(target)
+	a.setFocus(focusEditor)
 }
 
 func (a *App) FormatDocument() {

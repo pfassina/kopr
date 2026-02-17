@@ -41,6 +41,12 @@ type NoteClosedMsg struct {
 // SaveUnnamedMsg is sent when :w is used on an unnamed buffer.
 type SaveUnnamedMsg struct{}
 
+// FollowLinkMsg is sent when the user presses gf on a wiki link.
+type FollowLinkMsg struct{}
+
+// GoBackMsg is sent when the user presses gb to go back to the previous note.
+type GoBackMsg struct{}
+
 // Editor is a Bubble Tea model that embeds Neovim in a PTY
 // and renders it via a VT emulator, with RPC for programmatic control.
 type Editor struct {
@@ -151,6 +157,7 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 		e.rpc = msg.rpc
 		if e.program != nil {
 			e.rpc.SetupQuitSaveIntercept(e.program)
+			e.rpc.SetupLinkNavigation(e.program)
 		}
 		// Ensure left gutter aligns buffer text with panel titles
 		e.rpc.ExecCommand("set foldcolumn=1")

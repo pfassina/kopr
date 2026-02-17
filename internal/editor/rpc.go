@@ -204,6 +204,52 @@ vim.cmd([[cnoreabbrev <expr> w getcmdtype()==':' && getcmdline()=='w' && bufname
 	return r.client.ExecLua(lua, nil)
 }
 
+// CursorPosition returns the current cursor position as (line, col).
+// Line is 1-based, col is 0-based (matching Neovim convention).
+func (r *RPC) CursorPosition() (int, int, error) {
+	var pos [2]int
+	err := r.client.ExecLua("return vim.api.nvim_win_get_cursor(0)", &pos)
+	if err != nil {
+		return 0, 0, err
+	}
+	return pos[0], pos[1], nil
+}
+
+// SetupLinkNavigation maps gf/gb in normal mode to send RPC notifications
+// for following wiki links and navigating back.
+func (r *RPC) SetupLinkNavigation(program *tea.Program) error {
+	r.client.RegisterHandler("kopr:follow-link", func(args ...interface{}) {
+		if program != nil {
+			program.Send(FollowLinkMsg{})
+		}
+	})
+
+	r.client.RegisterHandler("kopr:go-back", func(args ...interface{}) {
+		if program != nil {
+			program.Send(GoBackMsg{})
+		}
+	})
+
+	if err := r.client.Subscribe("kopr:follow-link"); err != nil {
+		return err
+	}
+	if err := r.client.Subscribe("kopr:go-back"); err != nil {
+		return err
+	}
+
+	cid := r.client.ChannelID()
+	lua := fmt.Sprintf(`
+vim.keymap.set('n', 'gf', function()
+  vim.rpcnotify(%d, 'kopr:follow-link')
+end, {noremap=true, desc='Follow wiki link'})
+vim.keymap.set('n', 'gb', function()
+  vim.rpcnotify(%d, 'kopr:go-back')
+end, {noremap=true, desc='Go back to previous note'})
+`, cid, cid)
+
+	return r.client.ExecLua(lua, nil)
+}
+
 // SetBufferName sets the name of the current buffer.
 func (r *RPC) SetBufferName(name string) error {
 	buf, err := r.client.CurrentBuffer()
