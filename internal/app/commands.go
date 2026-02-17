@@ -69,6 +69,9 @@ func (a *App) handleFinderResult(path string) tea.Cmd {
 	fullPath := filepath.Join(a.cfg.VaultPath, path)
 	a.openInEditor(fullPath)
 	a.status.SetFile(path)
+	if a.currentFile != "" && a.currentFile != path {
+		a.prevFile = a.currentFile
+	}
 	a.currentFile = path
 	a.focused = focusEditor
 	a.updateBacklinks(path)

@@ -63,6 +63,9 @@ type App struct {
 	// currentFile caches the open file's relative path for use in View().
 	// Never call RPC from View() — it can hang if the connection is dead.
 	currentFile string
+
+	// prevFile stores the previously opened note for gb (go back) navigation.
+	prevFile string
 }
 
 func New(cfg config.Config) App {
@@ -213,6 +216,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		fullPath := filepath.Join(a.cfg.VaultPath, msg.Path)
 		a.openInEditor(fullPath)
 		a.status.SetFile(msg.Path)
+		if a.currentFile != "" && a.currentFile != msg.Path {
+			a.prevFile = a.currentFile
+		}
 		a.currentFile = msg.Path
 		a.setFocus(focusEditor)
 		a.updateBacklinks(msg.Path)
@@ -230,6 +236,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case editor.FollowLinkMsg:
 		a.FollowLink()
+		return a, nil
+
+	case editor.GoBackMsg:
+		a.GoBack()
 		return a, nil
 
 	case editor.NoteClosedMsg:
