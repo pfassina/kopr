@@ -87,9 +87,16 @@ func SaveFile(vaultPath string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
-	return toml.NewEncoder(f).Encode(fc)
+	encErr := toml.NewEncoder(f).Encode(fc)
+	closeErr := f.Close()
+	if encErr != nil {
+		return encErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return nil
 }
 
 // ExpandHome replaces a leading ~ with the user's home directory.

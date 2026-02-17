@@ -47,17 +47,24 @@ func (db *DB) Search(query string, limit int) ([]SearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var results []SearchResult
 	for rows.Next() {
 		var r SearchResult
 		if err := rows.Scan(&r.ID, &r.Path, &r.Title, &r.Rank); err != nil {
-			continue
+			_ = rows.Close()
+			return nil, err
 		}
 		results = append(results, r)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // SearchFiles searches note titles/paths (for fuzzy file finding).
@@ -66,7 +73,6 @@ func (db *DB) SearchFiles(query string, limit int) ([]SearchResult, error) {
 		limit = 50
 	}
 
-	// Use LIKE for simple prefix/substring matching
 	pattern := "%" + query + "%"
 	rows, err := db.conn.Query(`
 		SELECT id, path, title, 0 as rank
@@ -78,17 +84,24 @@ func (db *DB) SearchFiles(query string, limit int) ([]SearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var results []SearchResult
 	for rows.Next() {
 		var r SearchResult
 		if err := rows.Scan(&r.ID, &r.Path, &r.Title, &r.Rank); err != nil {
-			continue
+			_ = rows.Close()
+			return nil, err
 		}
 		results = append(results, r)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // ListAllNotes returns all notes, sorted by path.
@@ -106,17 +119,24 @@ func (db *DB) ListAllNotes(limit int) ([]SearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var results []SearchResult
 	for rows.Next() {
 		var r SearchResult
 		if err := rows.Scan(&r.ID, &r.Path, &r.Title, &r.Rank); err != nil {
-			continue
+			_ = rows.Close()
+			return nil, err
 		}
 		results = append(results, r)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // GetBacklinks returns all notes that link to the given path.
@@ -133,17 +153,24 @@ func (db *DB) GetBacklinks(targetPath string) ([]BacklinkResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var results []BacklinkResult
 	for rows.Next() {
 		var r BacklinkResult
 		if err := rows.Scan(&r.SourcePath, &r.SourceTitle, &r.Line, &r.Col); err != nil {
-			continue
+			_ = rows.Close()
+			return nil, err
 		}
 		results = append(results, r)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // FindNoteByBasename returns the relative path of a note matching the given basename.
@@ -188,15 +215,22 @@ func (db *DB) SearchHeadings(query string, limit int) ([]HeadingResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var results []HeadingResult
 	for rows.Next() {
 		var r HeadingResult
 		if err := rows.Scan(&r.NoteID, &r.NotePath, &r.Level, &r.Text, &r.Line); err != nil {
-			continue
+			_ = rows.Close()
+			return nil, err
 		}
 		results = append(results, r)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }

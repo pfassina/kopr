@@ -6,18 +6,18 @@ import (
 )
 
 type Config struct {
-	VaultPath      string
-	Listen         string
-	Serve          bool
-	Theme          string
-	TreeWidth      int
-	InfoWidth      int
-	ShowTree       bool
-	ShowInfo       bool
-	ShowStatus     bool
-	LeaderKey      string
-	LeaderTimeout  int // milliseconds
-	NvimMode       string
+	VaultPath       string
+	Listen          string
+	Serve           bool
+	Theme           string
+	TreeWidth       int
+	InfoWidth       int
+	ShowTree        bool
+	ShowInfo        bool
+	ShowStatus      bool
+	LeaderKey       string
+	LeaderTimeout   int // milliseconds
+	NvimMode        string
 	ResetNvimConfig bool
 }
 

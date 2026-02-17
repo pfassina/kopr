@@ -2,10 +2,10 @@ package app
 
 // Layout computes the dimensions for each panel.
 type Layout struct {
-	TreeWidth   int
-	EditorWidth int
-	InfoWidth   int
-	Height      int
+	TreeWidth    int
+	EditorWidth  int
+	InfoWidth    int
+	Height       int
 	StatusHeight int
 }
 

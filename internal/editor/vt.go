@@ -26,7 +26,9 @@ func newVTScreen(width, height int, ptyFile *os.File) *vtScreen {
 		for {
 			n, err := term.Read(buf)
 			if n > 0 {
-				ptyFile.Write(buf[:n])
+				if _, err := ptyFile.Write(buf[:n]); err != nil {
+					return
+				}
 			}
 			if err != nil {
 				return

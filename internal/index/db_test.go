@@ -7,7 +7,11 @@ func TestOpenMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	// Insert a note
 	id, err := db.UpsertNote("test.md", "Test", "test", "", "abc123", 1000, 42)
@@ -42,10 +46,18 @@ func TestSearchFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 
-	db.UpsertNote("daily/2024-01-01.md", "2024-01-01", "2024-01-01", "", "a", 1000, 10)
-	db.UpsertNote("inbox/note.md", "Quick Note", "quick-note", "", "b", 1000, 10)
+	if _, err := db.UpsertNote("daily/2024-01-01.md", "2024-01-01", "2024-01-01", "", "a", 1000, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.UpsertNote("inbox/note.md", "Quick Note", "quick-note", "", "b", 1000, 10); err != nil {
+		t.Fatal(err)
+	}
 
 	results, err := db.SearchFiles("daily", 10)
 	if err != nil {
@@ -61,11 +73,21 @@ func TestFindNoteByBasename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 
-	db.UpsertNote("projects/my-note.md", "My Note", "my-note", "", "a", 1000, 10)
-	db.UpsertNote("daily/2024-01-01.md", "2024-01-01", "2024-01-01", "", "b", 1000, 10)
-	db.UpsertNote("root-note.md", "Root Note", "root-note", "", "c", 1000, 10)
+	if _, err := db.UpsertNote("projects/my-note.md", "My Note", "my-note", "", "a", 1000, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.UpsertNote("daily/2024-01-01.md", "2024-01-01", "2024-01-01", "", "b", 1000, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.UpsertNote("root-note.md", "Root Note", "root-note", "", "c", 1000, 10); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		basename string
@@ -94,13 +116,24 @@ func TestBacklinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 
-	id1, _ := db.UpsertNote("a.md", "Note A", "a", "", "a", 1000, 10)
-	db.UpsertNote("projects/b.md", "Note B", "b", "", "b", 1000, 10)
+	id1, err := db.UpsertNote("a.md", "Note A", "a", "", "a", 1000, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.UpsertNote("projects/b.md", "Note B", "b", "", "b", 1000, 10); err != nil {
+		t.Fatal(err)
+	}
 
 	// Links store basenames
-	db.InsertLink(id1, "b.md", "", "", 5, 10)
+	if err := db.InsertLink(id1, "b.md", "", "", 5, 10); err != nil {
+		t.Fatal(err)
+	}
 
 	// GetBacklinks extracts basename from the target path
 	backlinks, err := db.GetBacklinks("projects/b.md")

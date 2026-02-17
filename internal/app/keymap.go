@@ -17,10 +17,10 @@ import (
 
 // Binding represents a leader key binding.
 type Binding struct {
-	Key         string
-	Label       string
-	Action      func(a *App) tea.Cmd
-	Children    map[string]*Binding
+	Key      string
+	Label    string
+	Action   func(a *App) tea.Cmd
+	Children map[string]*Binding
 }
 
 // LeaderState tracks the leader key sequence.
@@ -28,7 +28,6 @@ type LeaderState struct {
 	active   bool
 	keys     string
 	node     map[string]*Binding
-	timer    *time.Timer
 	showHelp bool
 }
 
@@ -217,7 +216,12 @@ func (a *App) CreateBlankNote() {
 	if rpc == nil {
 		return
 	}
-	rpc.NewBuffer()
+	if err := rpc.NewBuffer(); err != nil {
+		if a.program != nil {
+			a.program.Send(fatalErrorMsg{err: err})
+		}
+		return
+	}
 	a.editor.SetShowSplash(false)
 	a.currentFile = ""
 	a.status.SetFile("")
@@ -364,7 +368,12 @@ func (a *App) ReloadConfig() {
 	// Reload Neovim config
 	rpc := a.editor.GetRPC()
 	if rpc != nil {
-		rpc.ExecLua("dofile(vim.fn.stdpath('config') .. '/init.lua')", nil)
+		if err := rpc.ExecLua("dofile(vim.fn.stdpath('config') .. '/init.lua')", nil); err != nil {
+			if a.program != nil {
+				a.program.Send(fatalErrorMsg{err: err})
+			}
+			return
+		}
 	}
 }
 
@@ -409,5 +418,10 @@ func (a *App) FormatDocument() {
 	}
 
 	lua := fmt.Sprintf("vim.api.nvim_buf_set_lines(0, 0, -1, false, {%s})", strings.Join(luaLines, ","))
-	rpc.ExecLua(lua, nil)
+	if err := rpc.ExecLua(lua, nil); err != nil {
+		if a.program != nil {
+			a.program.Send(fatalErrorMsg{err: err})
+		}
+		return
+	}
 }

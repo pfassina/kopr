@@ -1,8 +1,8 @@
 package ssh
 
 import (
-	"github.com/charmbracelet/ssh"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/ssh"
 	bts "github.com/charmbracelet/wish/bubbletea"
 
 	"github.com/pfassina/kopr/internal/app"

@@ -44,8 +44,12 @@ func (n *nvimPTY) resize(width, height int) error {
 }
 
 func (n *nvimPTY) close() error {
-	n.file.Close()
+	if err := n.file.Close(); err != nil {
+		return err
+	}
 	err := n.cmd.Wait()
-	os.Remove(n.socket)
+	if rmErr := os.Remove(n.socket); rmErr != nil && !os.IsNotExist(rmErr) {
+		return rmErr
+	}
 	return err
 }

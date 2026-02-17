@@ -37,10 +37,10 @@ func (p *Parser) Parse(content []byte) *ParsedNote {
 
 // ParsedNote contains extracted metadata from a markdown file.
 type ParsedNote struct {
-	Content    []byte
+	Content     []byte
 	Frontmatter *Frontmatter
-	Headings   []Heading
-	WikiLinks  []WikiLink
+	Headings    []Heading
+	WikiLinks   []WikiLink
 }
 
 // PlainContent returns the note content without frontmatter.

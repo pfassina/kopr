@@ -8,3 +8,4 @@ bin/
 result
 .direnv/
 .envrc
+/vault

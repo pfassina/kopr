@@ -10,13 +10,15 @@ import (
 )
 
 // indexInitDoneMsg signals indexing is complete.
-type indexInitDoneMsg struct{}
+type indexInitDoneMsg struct{ err error }
 
 // initIndex starts the indexer in a goroutine.
 func (a *App) initIndex() tea.Cmd {
 	return func() tea.Msg {
 		if a.indexer != nil {
-			a.indexer.IndexAll()
+			if err := a.indexer.IndexAll(); err != nil {
+				return indexInitDoneMsg{err: err}
+			}
 		}
 		return indexInitDoneMsg{}
 	}
@@ -89,7 +91,12 @@ func (a *App) createNoteFromFinder(name string) {
 		return
 	}
 
-	a.editor.OpenFile(fullPath)
+	if err := a.editor.OpenFile(fullPath); err != nil {
+		if a.program != nil {
+			a.program.Send(fatalErrorMsg{err: err})
+		}
+		return
+	}
 	a.status.SetFile(relPath)
 	a.currentFile = relPath
 	a.tree.Refresh()

@@ -17,10 +17,13 @@ type Watcher struct {
 	root     string
 	debounce map[string]*time.Timer
 	mu       sync.Mutex
-	onChange func() // callback after index changes
+	onChange func()      // callback after index changes
+	onError  func(error) // callback on fatal errors
+
+	closed bool
 }
 
-func NewWatcher(indexer *Indexer, root string, onChange func()) (*Watcher, error) {
+func NewWatcher(indexer *Indexer, root string, onChange func(), onError func(error)) (*Watcher, error) {
 	fw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -32,21 +35,27 @@ func NewWatcher(indexer *Indexer, root string, onChange func()) (*Watcher, error
 		root:     root,
 		debounce: make(map[string]*time.Timer),
 		onChange: onChange,
+		onError:  onError,
 	}
 
 	// Add vault root and subdirectories
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 		if info.IsDir() {
 			if strings.HasPrefix(info.Name(), ".") && path != root {
 				return filepath.SkipDir
 			}
-			fw.Add(path)
+			if err := fw.Add(path); err != nil {
+				return err
+			}
 		}
 		return nil
-	})
+	}); err != nil {
+		_ = fw.Close()
+		return nil, err
+	}
 
 	return w, nil
 }
@@ -61,10 +70,12 @@ func (w *Watcher) Start() {
 			}
 			w.handleEvent(event)
 
-		case _, ok := <-w.watcher.Errors:
+		case err, ok := <-w.watcher.Errors:
 			if !ok {
 				return
 			}
+			w.fatal(err)
+			return
 		}
 	}
 }
@@ -78,7 +89,10 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 		if event.Has(fsnotify.Create) {
 			info, err := os.Stat(path)
 			if err == nil && info.IsDir() && !strings.HasPrefix(info.Name(), ".") {
-				w.watcher.Add(path)
+				if err := w.watcher.Add(path); err != nil {
+					w.fatal(err)
+					return
+				}
 			}
 		}
 		return
@@ -95,9 +109,15 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 		w.mu.Unlock()
 
 		if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-			w.indexer.RemoveFile(path)
+			if err := w.indexer.RemoveFile(path); err != nil {
+				w.fatal(err)
+				return
+			}
 		} else {
-			w.indexer.IndexFile(path)
+			if err := w.indexer.IndexFile(path); err != nil {
+				w.fatal(err)
+				return
+			}
 		}
 
 		if w.onChange != nil {
@@ -109,5 +129,8 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 
 // Stop stops the watcher.
 func (w *Watcher) Stop() error {
+	w.mu.Lock()
+	w.closed = true
+	w.mu.Unlock()
 	return w.watcher.Close()
 }

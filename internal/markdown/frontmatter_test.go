@@ -4,9 +4,9 @@ import "testing"
 
 func TestExtractFrontmatter(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		want    *Frontmatter
+		name  string
+		input string
+		want  *Frontmatter
 	}{
 		{
 			name:  "no frontmatter",
