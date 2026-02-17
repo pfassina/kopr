@@ -68,6 +68,30 @@ SSH / Local Terminal
 ### Communication pattern
 Panels communicate with `App` via typed Bubble Tea messages (e.g., `FileSelectedMsg`, `NoteClosedMsg`). No shared mutable state across packages. All Neovim RPC happens in `Update()` or commands — never in `View()`.
 
+## Working Agreements (how we collaborate)
+
+Kopr sessions should be feature-focused. To avoid relying on chat history, we treat repo docs + GitHub issues as the source of truth.
+
+### Source-of-truth docs
+
+- `CLAUDE.md`: how to work in this repo (commands, conventions, quick architecture map).
+- `docs/ARCHITECTURE.md`: deeper architecture + invariants.
+- `docs/DECISIONS.md`: append-only decision log (ADR-lite).
+- `docs/ROADMAP.md`: near-term priorities.
+
+### End-of-session checkpoint (required)
+
+When a session changes behavior or introduces a new invariant:
+
+- Update `docs/DECISIONS.md` with a dated bullet.
+- Update `docs/ARCHITECTURE.md` if the architecture/invariants changed.
+- Update `docs/ROADMAP.md` if priorities changed.
+
+### Feature work
+
+- Use GitHub Issues as the unit of work.
+- For feature discussions-only sessions, draft an issue using the **Feature request** template.
+
 ## Coding Conventions
 
 - **Fail fast, loud errors (project policy)** — avoid silent error handling. In production code, check and propagate errors. If an error is intentionally ignored, use an explicit discard (`_ = err`) with a comment explaining why.
