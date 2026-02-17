@@ -24,6 +24,16 @@ go install github.com/pfassina/kopr/cmd/kopr@latest
 
 Requires Neovim >= 0.9.
 
+## Development
+
+If you use Nix, the repo includes a flake-based dev shell:
+
+```bash
+nix develop
+
+make test
+```
+
 ## Usage
 
 ```bash
