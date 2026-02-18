@@ -114,6 +114,7 @@ func (a *App) createNoteFromFinder(name string) {
 	content := fmt.Sprintf("---\ntitle: %s\n---\n\n", name)
 	fullPath, err := a.vault.CreateNote(relPath, content)
 	if err != nil {
+		a.status.SetError(err.Error())
 		return
 	}
 
