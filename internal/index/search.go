@@ -2,7 +2,6 @@ package index
 
 import (
 	"database/sql"
-	"path/filepath"
 )
 
 // SearchResult represents a single search result.
@@ -142,14 +141,14 @@ func (db *DB) ListAllNotes(limit int) ([]SearchResult, error) {
 // GetBacklinks returns all notes that link to the given path.
 // Matches by basename since target_path stores basenames.
 func (db *DB) GetBacklinks(targetPath string) ([]BacklinkResult, error) {
-	basename := filepath.Base(targetPath)
+	basenameKey := canonicalBasenameKey(targetPath)
 	rows, err := db.conn.Query(`
 		SELECT n.path, n.title, l.line, l.col
 		FROM links l
 		JOIN notes n ON n.id = l.source_id
 		WHERE l.target_path = ?
 		ORDER BY n.path
-	`, basename)
+	`, basenameKey)
 	if err != nil {
 		return nil, err
 	}
@@ -174,12 +173,14 @@ func (db *DB) GetBacklinks(targetPath string) ([]BacklinkResult, error) {
 }
 
 // FindNoteByBasename returns the relative path of a note matching the given basename.
+// Basename matching is case-insensitive.
 // Returns empty string if no match is found.
 func (db *DB) FindNoteByBasename(basename string) (string, error) {
 	var path string
+	key := canonicalBasenameKey(basename)
 	err := db.conn.QueryRow(
-		`SELECT path FROM notes WHERE path = ? OR path LIKE ? LIMIT 1`,
-		basename, "%/"+basename,
+		`SELECT path FROM notes WHERE basename_key = ? LIMIT 1`,
+		key,
 	).Scan(&path)
 	if err == sql.ErrNoRows {
 		return "", nil

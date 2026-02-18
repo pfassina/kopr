@@ -4,7 +4,7 @@
 
 - Feature request workflow + templates
 - Improve UX around fatal errors (consistent quit path, error display)
-- Vault operations: enforce basename uniqueness across all move/copy flows
+- Vault operations: enforce basename uniqueness across all move/copy flows (done)
 
 ## Later
 
