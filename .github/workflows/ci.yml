@@ -24,11 +24,19 @@ jobs:
       - name: Enable Nix cache
         uses: DeterminateSystems/magic-nix-cache-action@v7
 
-      - name: Test
-        run: nix develop -c make test
+      # Cache Go module + build caches between runs.
+      - name: Cache Go
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/.cache/golangci-lint
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
-      - name: Lint
-        run: nix develop -c make lint
-
-      - name: Build
-        run: nix develop -c make build
+      # Use the minimal CI devShell to reduce downloads, and run everything
+      # inside a single nix develop to avoid repeated shell realization.
+      - name: Test / Lint / Build
+        run: nix develop .#ci -c bash -c "make test lint build"
