@@ -1038,30 +1038,11 @@ func (a *App) panelsVisible() (bool, bool) {
 }
 
 func (a *App) minWindowSize() (minW, minH int) {
-	showTree, showInfo := a.panelsVisible()
-
-	// These are UX-driven minima: below this, the multi-panel layout becomes
-	// unreadable and can trigger rendering glitches during resizes.
-	const (
-		minEditorW = 20
-		minSideW   = 15
-		minEditorH = 6 // includes some editor rows; title/status are added below
-	)
-
-	minW = minEditorW
-	if showTree {
-		minW += minSideW
-	}
-	if showInfo {
-		minW += minSideW
-	}
-
-	// Account for borders/overlaps and breathing room.
-	minW += 2
-
-	// Total height = editor/title area + status bar.
-	minH = minEditorH + 2 // +1 editor title row +1 status bar
-	return minW, minH
+	// UX-driven minimum supported terminal size. Below this we stop rendering the
+	// full UI and show a placeholder message.
+	//
+	// 80x24 is the classic baseline and still common on low-res displays.
+	return 80, 24
 }
 
 func (a *App) updateLayout() tea.Cmd {
