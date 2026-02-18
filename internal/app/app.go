@@ -273,9 +273,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.handleFinderResult(msg.Path)
 		a.setFocus(focusEditor)
 
-	case panel.FinderCreateMsg:
-		a.createNoteFromFinder(msg.Name)
-		a.setFocus(focusEditor)
+	case panel.FinderCreateRequestMsg:
+		// Keep finder visible so cancel returns the user to the same query.
+		a.pendingPrompt = promptAction{kind: "finder-create", path: msg.Name}
+		a.prompt.ShowConfirm(fmt.Sprintf("Create note %q?", msg.Name))
+		return a, nil
 
 	case panel.FinderClosedMsg:
 		a.setFocus(focusEditor)
@@ -730,6 +732,17 @@ func (a *App) handlePromptResult(value string) tea.Cmd {
 		a.pendingPrompt = promptAction{}
 		a.prompt.Hide()
 		return a.handleDeleteNotes(value, action.paths)
+	case "finder-create":
+		// Confirm-only prompt: create note on "yes", otherwise do nothing.
+		a.pendingPrompt = promptAction{}
+		a.prompt.Hide()
+		if strings.ToLower(strings.TrimSpace(value)) != "yes" {
+			return nil
+		}
+		a.createNoteFromFinder(action.path)
+		a.finder.Hide()
+		a.setFocus(focusEditor)
+		return nil
 	}
 	return nil
 }

@@ -10,3 +10,4 @@ This file is the project’s lightweight decision log. Append entries; don’t r
 - 2026-02-17: Normalize vault path to an absolute path at startup to avoid Neovim CWD/path double-prefix issues.
 - 2026-02-17: On Neovim buffer write, immediately re-index the saved note and refresh the info panel backlinks for the currently open note.
 - 2026-02-17: Resizing: force a full Bubble Tea terminal repaint (`tea.ClearScreen`) on `WindowSizeMsg` to avoid persistent blank UI after terminal resizes; also signal Neovim with SIGWINCH after PTY resize.
+- 2026-02-18: Finder UX: when no results match the query, show an explicit hint that Enter will create a note and require a confirm prompt before creating; cancel returns to the finder with the query preserved.

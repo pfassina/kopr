@@ -21,8 +21,12 @@ type FinderResultMsg struct {
 	Path string
 }
 
-// FinderCreateMsg is sent when the user wants to create a new note.
-type FinderCreateMsg struct {
+// FinderCreateRequestMsg is sent when the user requests to create a new note
+// from the current finder query (typically when there are no results).
+//
+// The app is expected to show a confirmation prompt before actually creating
+// anything.
+type FinderCreateRequestMsg struct {
 	Name string
 }
 
@@ -98,12 +102,11 @@ func (f Finder) Update(msg tea.Msg) (Finder, tea.Cmd) {
 					return FinderResultMsg{Path: item.Path}
 				}
 			}
-			// No results — create a new note with the query as name
+			// No results — request note creation (the app will confirm).
 			query := strings.TrimSpace(f.input.Value())
 			if query != "" {
-				f.visible = false
 				return f, func() tea.Msg {
-					return FinderCreateMsg{Name: query}
+					return FinderCreateRequestMsg{Name: query}
 				}
 			}
 			return f, nil
@@ -172,6 +175,13 @@ func (f Finder) View() string {
 	if len(f.items) == 0 {
 		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 		lines = append(lines, dim.Render("No results"))
+
+		query := strings.TrimSpace(f.input.Value())
+		if query != "" {
+			lines = append(lines, "")
+			lines = append(lines, dim.Render(fmt.Sprintf("Enter: create note %q", query)))
+			lines = append(lines, dim.Render("Esc: cancel"))
+		}
 	} else {
 		for i := 0; i < maxResults; i++ {
 			item := f.items[i]
