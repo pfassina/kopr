@@ -21,8 +21,20 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v12
 
-      - name: Enable Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@v7
+      # Use Cachix as a binary cache to avoid rebuilding/downloading the
+      # world on every fresh GitHub runner.
+      - name: Enable Cachix (pull)
+        uses: cachix/cachix-action@v15
+        with:
+          name: kopr
+
+      # Only push to the cache from trusted runs (pushes to master).
+      - name: Enable Cachix (push)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: cachix/cachix-action@v15
+        with:
+          name: kopr
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       # Cache Go module + build caches between runs.
       - name: Cache Go
