@@ -144,7 +144,7 @@ func (idx *Indexer) IndexFile(absPath string) error {
 	}
 	for _, link := range parsed.WikiLinks {
 		targetPath := markdown.ResolveWikiLinkTarget(link.Target)
-		targetPath = filepath.Base(targetPath) // store only basename
+		targetPath = canonicalBasenameKey(targetPath) // store canonical, case-insensitive basename
 		if err := idx.db.InsertLink(noteID, targetPath, link.Section, link.Alias, link.Line, link.Col); err != nil {
 			return fmt.Errorf("insert link to %q: %w", targetPath, err)
 		}
@@ -181,7 +181,7 @@ func titleFromPath(path string) string {
 func (idx *Indexer) resolveLinks(sourceID int64) error {
 	_, err := idx.db.Conn().Exec(`
 		UPDATE links SET target_id = (
-			SELECT id FROM notes WHERE path = links.target_path OR path LIKE '%/' || links.target_path
+			SELECT id FROM notes WHERE basename_key = links.target_path
 		) WHERE source_id = ? AND target_id IS NULL
 	`, sourceID)
 	return err
