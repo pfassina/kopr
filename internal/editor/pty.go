@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 
 	"github.com/creack/pty"
 )
@@ -37,10 +38,25 @@ func startNvim(width, height int, socketPath, vaultPath string) (*nvimPTY, error
 }
 
 func (n *nvimPTY) resize(width, height int) error {
-	return pty.Setsize(n.file, &pty.Winsize{
+	if err := pty.Setsize(n.file, &pty.Winsize{
 		Rows: uint16(height),
 		Cols: uint16(width),
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Many TUI apps (including Neovim) rely on SIGWINCH in addition to TIOCSWINSZ
+	// to reliably redraw after resizes.
+	if n.cmd != nil && n.cmd.Process != nil {
+		if err := syscall.Kill(n.cmd.Process.Pid, syscall.SIGWINCH); err != nil {
+			// If the process is already gone, there's nothing to signal.
+			if err != syscall.ESRCH {
+				return fmt.Errorf("sigwinch nvim: %w", err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (n *nvimPTY) close() error {
