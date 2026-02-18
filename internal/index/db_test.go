@@ -79,7 +79,7 @@ func TestFindNoteByBasename(t *testing.T) {
 		}
 	}()
 
-	if _, err := db.UpsertNote("projects/my-note.md", "My Note", "my-note", "", "a", 1000, 10); err != nil {
+	if _, err := db.UpsertNote("projects/My-Note.md", "My Note", "my-note", "", "a", 1000, 10); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.UpsertNote("daily/2024-01-01.md", "2024-01-01", "2024-01-01", "", "b", 1000, 10); err != nil {
@@ -93,7 +93,8 @@ func TestFindNoteByBasename(t *testing.T) {
 		basename string
 		want     string
 	}{
-		{"my-note.md", "projects/my-note.md"},
+		{"my-note.md", "projects/My-Note.md"},
+		{"MY-NOTE.MD", "projects/My-Note.md"},
 		{"2024-01-01.md", "daily/2024-01-01.md"},
 		{"root-note.md", "root-note.md"},
 		{"nonexistent.md", ""},
@@ -108,6 +109,11 @@ func TestFindNoteByBasename(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("FindNoteByBasename(%q) = %q, want %q", tt.basename, got, tt.want)
 		}
+	}
+
+	// Case-insensitive uniqueness should be enforced at the DB level.
+	if _, err := db.UpsertNote("otherdir/my-note.md", "Dup", "dup", "", "z", 1000, 10); err == nil {
+		t.Fatalf("expected duplicate basename insert to fail")
 	}
 }
 

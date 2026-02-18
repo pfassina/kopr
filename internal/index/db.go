@@ -3,6 +3,8 @@ package index
 import (
 	"database/sql"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -11,6 +13,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT NOT NULL UNIQUE,
+    basename_key TEXT NOT NULL DEFAULT '',
     title TEXT NOT NULL DEFAULT '',
     slug TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT '',
@@ -18,6 +21,8 @@ CREATE TABLE IF NOT EXISTS notes (
     size INTEGER NOT NULL DEFAULT 0,
     hash TEXT NOT NULL DEFAULT ''
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_basename_key ON notes(basename_key);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
     title, content, tags, headings,
@@ -75,7 +80,14 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
-	return &DB{conn: conn}, nil
+	db := &DB{conn: conn}
+	if err := db.migrate(); err != nil {
+		if closeErr := conn.Close(); closeErr != nil {
+			return nil, fmt.Errorf("migrate db: %w (close: %v)", err, closeErr)
+		}
+		return nil, fmt.Errorf("migrate db: %w", err)
+	}
+	return db, nil
 }
 
 // OpenMemory opens an in-memory database (for testing).
@@ -90,7 +102,15 @@ func OpenMemory() (*DB, error) {
 		}
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
-	return &DB{conn: conn}, nil
+	// In-memory DB still runs migrations for consistent behavior.
+	db := &DB{conn: conn}
+	if err := db.migrate(); err != nil {
+		if closeErr := conn.Close(); closeErr != nil {
+			return nil, fmt.Errorf("migrate db: %w (close: %v)", err, closeErr)
+		}
+		return nil, fmt.Errorf("migrate db: %w", err)
+	}
+	return db, nil
 }
 
 // Close closes the database connection.
@@ -105,17 +125,19 @@ func (db *DB) Conn() *sql.DB {
 
 // UpsertNote inserts or updates a note and returns its ID.
 func (db *DB) UpsertNote(path, title, slug, status, hash string, modTime, size int64) (int64, error) {
+	basenameKey := canonicalBasenameKey(path)
 	res, err := db.conn.Exec(`
-		INSERT INTO notes (path, title, slug, status, mod_time, size, hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO notes (path, basename_key, title, slug, status, mod_time, size, hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
+			basename_key = excluded.basename_key,
 			title = excluded.title,
 			slug = excluded.slug,
 			status = excluded.status,
 			mod_time = excluded.mod_time,
 			size = excluded.size,
 			hash = excluded.hash
-	`, path, title, slug, status, modTime, size, hash)
+	`, path, basenameKey, title, slug, status, modTime, size, hash)
 	if err != nil {
 		return 0, err
 	}
@@ -211,4 +233,89 @@ func (db *DB) GetNoteHash(path string) (string, error) {
 func (db *DB) DeleteNote(path string) error {
 	_, err := db.conn.Exec("DELETE FROM notes WHERE path = ?", path)
 	return err
+}
+
+func canonicalBasenameKey(path string) string {
+	// Basename uniqueness in Kopr is case-insensitive.
+	return strings.ToLower(filepath.Base(path))
+}
+
+func (db *DB) migrate() error {
+	// notes.basename_key (case-insensitive basename uniqueness)
+	hasBasenameKey, err := db.hasColumn("notes", "basename_key")
+	if err != nil {
+		return err
+	}
+	if !hasBasenameKey {
+		if _, err := db.conn.Exec("ALTER TABLE notes ADD COLUMN basename_key TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("add notes.basename_key: %w", err)
+		}
+	}
+
+	// Backfill basename_key for all existing rows.
+	rows, err := db.conn.Query("SELECT path FROM notes")
+	if err != nil {
+		return fmt.Errorf("read note paths: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return fmt.Errorf("scan note path: %w", err)
+		}
+		paths = append(paths, p)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read note paths: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close note paths: %w", err)
+	}
+
+	seen := map[string]string{}
+	for _, p := range paths {
+		key := canonicalBasenameKey(p)
+		if other, ok := seen[key]; ok && other != p {
+			return fmt.Errorf("basename conflict during migration: %q and %q", other, p)
+		}
+		seen[key] = p
+		if _, err := db.conn.Exec("UPDATE notes SET basename_key = ? WHERE path = ?", key, p); err != nil {
+			return fmt.Errorf("backfill basename_key for %q: %w", p, err)
+		}
+	}
+
+	if _, err := db.conn.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_basename_key ON notes(basename_key)"); err != nil {
+		return fmt.Errorf("create idx_notes_basename_key: %w", err)
+	}
+
+	// Normalize existing stored wiki-link targets to the canonical key.
+	if _, err := db.conn.Exec("UPDATE links SET target_path = lower(target_path)"); err != nil {
+		return fmt.Errorf("normalize links.target_path: %w", err)
+	}
+
+	return nil
+}
+
+func (db *DB) hasColumn(table, col string) (bool, error) {
+	rows, err := db.conn.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == col {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
