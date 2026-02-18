@@ -9,3 +9,4 @@ This file is the project’s lightweight decision log. Append entries; don’t r
 - 2026-02-17: Add deterministic Markdown auto-format on save (configurable via `auto_format_on_save`).
 - 2026-02-17: Normalize vault path to an absolute path at startup to avoid Neovim CWD/path double-prefix issues.
 - 2026-02-17: On Neovim buffer write, immediately re-index the saved note and refresh the info panel backlinks for the currently open note.
+- 2026-02-17: Resizing: force a full Bubble Tea terminal repaint (`tea.ClearScreen`) on `WindowSizeMsg` to avoid persistent blank UI after terminal resizes; also signal Neovim with SIGWINCH after PTY resize.
