@@ -406,7 +406,7 @@ func (a *App) View() string {
 
 	minW, minH := a.minWindowSize()
 	if a.width < minW || a.height < minH {
-		msg := fmt.Sprintf("Window too small (%dx%d). Minimum supported: %dx%d", a.width, a.height, minW, minH)
+		msg := fmt.Sprintf("Window too small (%dx%d)\nMinimum supported: %dx%d", a.width, a.height, minW, minH)
 		bg := a.theme.StatusBg
 		style := lipgloss.NewStyle().
 			Foreground(a.theme.Text).
