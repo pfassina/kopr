@@ -148,12 +148,8 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 			debugf("WindowSizeMsg ignored: %dx%d", msg.Width, msg.Height)
 			return e, nil
 		}
-		// Avoid resizing the embedded terminal to extremely small sizes during a drag.
-		// We'll keep the last known-good frame and resize once dimensions stabilize.
-		if msg.Width < 30 || msg.Height < 10 {
-			debugf("WindowSizeMsg ignored (too small): %dx%d", msg.Width, msg.Height)
-			return e, nil
-		}
+		// Note: we still resize the embedded Neovim PTY even at small sizes; the app
+		// will render a "window too small" placeholder at the app layer.
 		debugf("WindowSizeMsg: %dx%d started=%v splash=%v rpc=%v", msg.Width, msg.Height, e.started, e.showSplash, e.rpc != nil)
 		e.width = msg.Width
 		e.height = msg.Height

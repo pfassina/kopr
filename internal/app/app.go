@@ -221,20 +221,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(tea.Printf("fatal: %v\n", msg.err), tea.Quit)
 
 	case tea.WindowSizeMsg:
-		// Some terminals send transient 0x0 sizes (and very small intermediate sizes)
-		// during live resizes; ignore them and keep the last known-good layout.
+		// Some terminals send transient 0x0 sizes during live resizes; ignore them.
 		if msg.Width <= 0 || msg.Height <= 0 {
-			return a, nil
-		}
-		// If the terminal gets *extremely* narrow, our multi-panel layout can end up
-		// in a broken/blank state. We prefer holding the previous layout until the
-		// user finishes resizing.
-		if msg.Width < 30 || msg.Height < 10 {
 			return a, nil
 		}
 		a.width = msg.Width
 		a.height = msg.Height
 		a.finder.SetSize(msg.Width, msg.Height)
+
+		minW, minH := a.minWindowSize()
+		if a.width < minW || a.height < minH {
+			return a, tea.ClearScreen
+		}
 
 		// Size prompt relative to the center/editor panel (Neovim buffer area), not the full screen.
 		showTree, showInfo := a.panelsVisible()
@@ -404,6 +402,27 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a *App) View() string {
 	if a.width == 0 || a.height == 0 {
 		return "Loading..."
+	}
+
+	minW, minH := a.minWindowSize()
+	if a.width < minW || a.height < minH {
+		msg := fmt.Sprintf("Window too small (%dx%d). Minimum supported: %dx%d", a.width, a.height, minW, minH)
+		style := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252")).
+			Background(lipgloss.Color("0")).
+			Padding(1, 2)
+		box := style.Render(msg)
+		// Clear background: fill the whole terminal with black, then center the message.
+		fillLines := a.height
+		if fillLines < 1 {
+			fillLines = 1
+		}
+		base := lipgloss.NewStyle().
+			Background(lipgloss.Color("0")).
+			Width(a.width).
+			Height(a.height).
+			Render(strings.Repeat("\n", fillLines))
+		return overlayCenter(base, box, a.width, a.height)
 	}
 
 	showTree, showInfo := a.panelsVisible()
@@ -1015,6 +1034,33 @@ func (a *App) handleRenameNote(newName, oldPath string) tea.Cmd {
 func (a *App) panelsVisible() (bool, bool) {
 	splash := a.editor.ShowSplash()
 	return a.showTree && !a.zenMode && !splash, a.showInfo && !a.zenMode && !splash
+}
+
+func (a *App) minWindowSize() (minW, minH int) {
+	showTree, showInfo := a.panelsVisible()
+
+	// These are UX-driven minima: below this, the multi-panel layout becomes
+	// unreadable and can trigger rendering glitches during resizes.
+	const (
+		minEditorW = 20
+		minSideW   = 15
+		minEditorH = 6 // includes some editor rows; title/status are added below
+	)
+
+	minW = minEditorW
+	if showTree {
+		minW += minSideW
+	}
+	if showInfo {
+		minW += minSideW
+	}
+
+	// Account for borders/overlaps and breathing room.
+	minW += 2
+
+	// Total height = editor/title area + status bar.
+	minH = minEditorH + 2 // +1 editor title row +1 status bar
+	return minW, minH
 }
 
 func (a *App) updateLayout() tea.Cmd {
