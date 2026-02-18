@@ -20,6 +20,7 @@ type PromptCancelledMsg struct{}
 type Prompt struct {
 	input         textinput.Model
 	title         string
+	errorMsg      string
 	width         int
 	height        int
 	visible       bool
@@ -40,6 +41,7 @@ func (p *Prompt) Show(title, placeholder string) {
 	p.visible = true
 	p.confirm = false
 	p.title = title
+	p.errorMsg = ""
 	p.input.Placeholder = placeholder
 	p.input.SetValue("")
 	p.input.Focus()
@@ -50,11 +52,13 @@ func (p *Prompt) ShowConfirm(title string) {
 	p.confirm = true
 	p.confirmCursor = 0
 	p.title = title
+	p.errorMsg = ""
 }
 
 func (p *Prompt) Hide() {
 	p.visible = false
 	p.confirm = false
+	p.errorMsg = ""
 	p.input.Blur()
 }
 
@@ -76,15 +80,20 @@ func (p Prompt) Update(msg tea.Msg) (Prompt, tea.Cmd) {
 		switch msg.String() {
 		case "enter":
 			value := strings.TrimSpace(p.input.Value())
-			p.visible = false
 			if value == "" {
+				p.visible = false
 				return p, func() tea.Msg { return PromptCancelledMsg{} }
 			}
+			// Don't hide on enter. The app may reject the value (e.g. name conflict)
+			// and should keep the user in-context to try again.
 			return p, func() tea.Msg { return PromptResultMsg{Value: value} }
 
 		case "esc", "ctrl+c":
 			p.visible = false
 			return p, func() tea.Msg { return PromptCancelledMsg{} }
+		default:
+			// Any other key clears prior error messages.
+			p.errorMsg = ""
 		}
 	}
 
@@ -148,6 +157,11 @@ func (p Prompt) View() string {
 	var lines []string
 	lines = append(lines, titleStyle.Render(p.title))
 	lines = append(lines, p.input.View())
+	if p.errorMsg != "" {
+		errStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
+		lines = append(lines, "")
+		lines = append(lines, errStyle.Render(p.errorMsg))
+	}
 	lines = append(lines, "")
 	lines = append(lines, dimStyle.Render("Enter to confirm, Esc to cancel"))
 
@@ -196,5 +210,15 @@ func (p Prompt) viewConfirm() string {
 func (p *Prompt) SetSize(width, height int) {
 	p.width = width
 	p.height = height
-	p.input.Width = width/2 - 8
+
+	inputW := width - 10
+	if inputW < 20 {
+		inputW = 20
+	}
+	p.input.Width = inputW
+}
+
+func (p *Prompt) SetError(msg string) {
+	p.errorMsg = strings.TrimSpace(msg)
+	p.input.Focus()
 }

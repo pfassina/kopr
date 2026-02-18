@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/pfassina/kopr/internal/config"
 	"github.com/pfassina/kopr/internal/editor"
@@ -116,7 +117,10 @@ func New(cfg config.Config) App {
 	dbPath := filepath.Join(cfg.VaultPath, ".kopr", "index.db")
 	ensureDir(filepath.Dir(dbPath))
 	db, err := index.Open(dbPath)
-	if err == nil {
+	if err != nil {
+		// Fail loud (but keep app usable): without an index the finder/search won't work.
+		a.status.SetError(fmt.Sprintf("index open failed: %v", err))
+	} else {
 		a.db = db
 		a.indexer = index.NewIndexer(db, cfg.VaultPath)
 		a.finder.SetSearchFunc(a.searchNotes)
@@ -220,7 +224,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 		a.finder.SetSize(msg.Width, msg.Height)
-		a.prompt.SetSize(msg.Width, msg.Height)
+
+		// Size prompt relative to the center/editor panel (Neovim buffer area), not the full screen.
+		showTree, showInfo := a.panelsVisible()
+		layout := ComputeLayout(a.width, a.height, showTree, showInfo, a.cfg.TreeWidth, a.cfg.InfoWidth)
+		promptW := int(float64(layout.EditorWidth) * 0.80)
+		// Clamp to a sane modal width; 80% of a wide terminal is still too wide.
+		if promptW > 100 {
+			promptW = 100
+		}
+		if promptW < 40 {
+			promptW = 40
+		}
+		if promptW > layout.EditorWidth-2 {
+			promptW = layout.EditorWidth - 2
+		}
+		a.prompt.SetSize(promptW, layout.Height)
+
 		cmd := a.updateLayout()
 		if cmd != nil {
 			return a, cmd
@@ -636,21 +656,113 @@ func (a *App) handlePromptCancelled() tea.Cmd {
 // handlePromptResult handles a confirmed value from the overlay prompt.
 func (a *App) handlePromptResult(value string) tea.Cmd {
 	action := a.pendingPrompt
-	a.pendingPrompt = promptAction{}
+	if action.kind == "" {
+		return nil
+	}
 
+	// By default the prompt stays open after Enter. We only clear/hide it on success.
 	switch action.kind {
 	case "save", "close":
-		return a.handleSaveAs(value, action.kind == "close")
+		if cmd, ok := a.handleSaveAsPrompt(value, action.kind == "close"); ok {
+			a.prompt.Hide()
+			a.pendingPrompt = promptAction{}
+			return cmd
+		}
+		return nil
 	case "create-note":
-		return a.handleCreateNote(value)
+		if cmd, ok := a.handleCreateNotePrompt(value); ok {
+			a.prompt.Hide()
+			a.pendingPrompt = promptAction{}
+			return cmd
+		}
+		return nil
+	case "rename-note":
+		if cmd, ok := a.handleRenameNotePrompt(value, action.path); ok {
+			a.prompt.Hide()
+			a.pendingPrompt = promptAction{}
+			return cmd
+		}
+		return nil
 	case "delete-note":
+		// Confirm prompts don't need validation; keep prior behavior.
+		a.pendingPrompt = promptAction{}
+		a.prompt.Hide()
 		return a.handleDeleteNote(value, action.path)
 	case "delete-notes":
+		a.pendingPrompt = promptAction{}
+		a.prompt.Hide()
 		return a.handleDeleteNotes(value, action.paths)
-	case "rename-note":
-		return a.handleRenameNote(value, action.path)
 	}
 	return nil
+}
+
+// handleSaveAsPrompt validates and performs save-as from the overlay prompt.
+// Returns ok=false when the value is rejected and the prompt should remain visible.
+func (a *App) handleSaveAsPrompt(value string, closeAfter bool) (cmd tea.Cmd, ok bool) {
+	relPath := value
+	if !strings.HasSuffix(relPath, ".md") {
+		relPath += ".md"
+	}
+
+	if msg := a.checkUniqueBasename(relPath); msg != "" {
+		a.prompt.SetError(msg)
+		return nil, false
+	}
+
+	rpc := a.editor.GetRPC()
+	if rpc == nil {
+		a.prompt.SetError("editor RPC unavailable")
+		return nil, false
+	}
+
+	// Get current buffer content before setting name
+	content, err := rpc.BufferContent()
+	if err != nil {
+		a.prompt.SetError(err.Error())
+		return nil, false
+	}
+
+	// Build content string
+	var buf strings.Builder
+	for i, line := range content {
+		buf.Write(line)
+		if i < len(content)-1 {
+			buf.WriteByte('\n')
+		}
+	}
+
+	// Create the file on disk via vault
+	fullPath, err := a.vault.CreateNote(relPath, buf.String())
+	if err != nil {
+		a.prompt.SetError(err.Error())
+		return nil, false
+	}
+
+	// Make the buffer modifiable, set name, and write
+	if err := rpc.ExecCommand("setlocal modifiable"); err != nil {
+		return fatalCmd(err), true
+	}
+	if err := rpc.SetBufferName(fullPath); err != nil {
+		return fatalCmd(err), true
+	}
+	// Remove BufWriteCmd interference by setting buftype back to normal
+	if err := rpc.ExecCommand("setlocal buftype="); err != nil {
+		return fatalCmd(err), true
+	}
+	if err := rpc.WriteBuffer(); err != nil {
+		return fatalCmd(err), true
+	}
+
+	a.status.SetFile(relPath)
+	a.currentFile = relPath
+	a.tree.Refresh()
+	a.updateBacklinks(relPath)
+
+	if closeAfter {
+		a.showSplash()
+	}
+
+	return nil, true
 }
 
 // handleSaveAs saves an unnamed buffer with the given name.
@@ -718,6 +830,40 @@ func (a *App) handleSaveAs(value string, closeAfter bool) tea.Cmd {
 	return nil
 }
 
+// handleCreateNotePrompt validates and creates a new note from the overlay prompt.
+// Returns ok=false when the value is rejected and the prompt should remain visible.
+func (a *App) handleCreateNotePrompt(name string) (cmd tea.Cmd, ok bool) {
+	// Directory creation: name ends with /
+	if strings.HasSuffix(name, "/") {
+		a.prompt.SetError("cannot create a directory here")
+		return nil, false
+	}
+
+	relPath := name
+	if !strings.HasSuffix(relPath, ".md") {
+		relPath += ".md"
+	}
+
+	if msg := a.checkUniqueBasename(relPath); msg != "" {
+		a.prompt.SetError(msg)
+		return nil, false
+	}
+
+	content := fmt.Sprintf("---\ntitle: %s\n---\n\n", strings.TrimSuffix(name, ".md"))
+	fullPath, err := a.vault.CreateNote(relPath, content)
+	if err != nil {
+		a.prompt.SetError(err.Error())
+		return nil, false
+	}
+
+	a.openInEditor(fullPath)
+	a.status.SetFile(relPath)
+	a.currentFile = relPath
+	a.tree.Refresh()
+	a.setFocus(focusEditor)
+	return nil, true
+}
+
 // handleCreateNote creates a new empty note or directory from the tree panel.
 func (a *App) handleCreateNote(name string) tea.Cmd {
 	// Directory creation: name ends with /
@@ -756,35 +902,39 @@ func (a *App) handleCreateNote(name string) tea.Cmd {
 
 // handlePaste performs copy or move for files in the clipboard.
 func (a *App) handlePaste(msg panel.TreePasteMsg) tea.Cmd {
-	// Block copy-paste: it creates a duplicate basename
+	// Copy is disallowed because it would violate the vault-wide basename uniqueness invariant.
 	if msg.Op == panel.ClipboardCopy {
-		a.status.SetError("copy not allowed: would create duplicate filenames")
+		a.status.SetError("copy not allowed: vault requires unique basenames")
 		return nil
 	}
 
 	for _, src := range msg.Sources {
-		var err error
-		if msg.Op == panel.ClipboardCopy {
-			err = a.vault.CopyNote(src, msg.DestDir)
-		} else {
-			err = a.vault.MoveNote(src, msg.DestDir)
-			if err == nil && a.currentFile == src {
-				newRel := filepath.Join(msg.DestDir, filepath.Base(src))
-				fullPath := filepath.Join(a.cfg.VaultPath, newRel)
-				rpc := a.editor.GetRPC()
-				if rpc != nil {
-					if err := rpc.SetBufferName(fullPath); err != nil {
-						return fatalCmd(err)
-					}
-					if err := rpc.WriteBuffer(); err != nil {
-						return fatalCmd(err)
-					}
-				}
-				a.status.SetFile(newRel)
-				a.currentFile = newRel
-			}
+		newRel := filepath.Join(msg.DestDir, filepath.Base(src))
+		if m := a.checkUniqueBasenameExcept(newRel, src); m != "" {
+			a.status.SetError(m)
+			return nil
 		}
-		_ = err
+
+		err := a.vault.MoveNote(src, msg.DestDir)
+		if err != nil {
+			a.status.SetError(err.Error())
+			return nil
+		}
+
+		if a.currentFile == src {
+			fullPath := filepath.Join(a.cfg.VaultPath, newRel)
+			rpc := a.editor.GetRPC()
+			if rpc != nil {
+				if err := rpc.SetBufferName(fullPath); err != nil {
+					return fatalCmd(err)
+				}
+				if err := rpc.WriteBuffer(); err != nil {
+					return fatalCmd(err)
+				}
+			}
+			a.status.SetFile(newRel)
+			a.currentFile = newRel
+		}
 	}
 
 	a.tree.ClearClipboard()
@@ -842,6 +992,36 @@ func (a *App) handleDeleteNotes(confirmation string, paths []string) tea.Cmd {
 	a.tree.ClearSelected()
 	a.tree.Refresh()
 	return nil
+}
+
+// handleRenameNotePrompt validates and renames from the overlay prompt.
+// Returns ok=false when the value is rejected and the prompt should remain visible.
+func (a *App) handleRenameNotePrompt(newName, oldPath string) (cmd tea.Cmd, ok bool) {
+	newRel := newName
+	if !strings.HasSuffix(newRel, ".md") {
+		newRel += ".md"
+	}
+
+	// Keep the same directory
+	dir := filepath.Dir(oldPath)
+	if dir != "." {
+		newRel = filepath.Join(dir, newRel)
+	}
+
+	if msg := a.checkUniqueBasename(newRel); msg != "" {
+		a.prompt.SetError(msg)
+		return nil, false
+	}
+
+	// Reuse the existing implementation (it already handles link rewriting and editor updates).
+	cmd = a.handleRenameNote(newName, oldPath)
+	// If the underlying rename failed, it currently returns nil without surfacing an error.
+	// Detect obvious failure by checking filesystem state.
+	if _, err := os.Stat(filepath.Join(a.cfg.VaultPath, newRel)); err != nil {
+		a.prompt.SetError("rename failed")
+		return nil, false
+	}
+	return cmd, true
 }
 
 // handleRenameNote renames a note to the given name.
@@ -1057,7 +1237,6 @@ func overlayCenter(base, overlay string, width, height int) string {
 
 	startRow := (height - len(overlayLines)) / 2
 	startCol := (width - overlayWidth) / 2
-
 	if startRow < 0 {
 		startRow = 0
 	}
@@ -1065,26 +1244,32 @@ func overlayCenter(base, overlay string, width, height int) string {
 		startCol = 0
 	}
 
+	padToCol := func(s string, col int) string {
+		// Pad with spaces based on *visible* width (handles ANSI strings safely).
+		for lipgloss.Width(s) < col {
+			s += " "
+		}
+		return s
+	}
+
 	for i, overlayLine := range overlayLines {
 		row := startRow + i
 		if row >= len(baseLines) {
 			break
 		}
+
 		baseLine := baseLines[row]
-		baseRunes := []rune(baseLine)
+		baseLine = padToCol(baseLine, startCol)
 
-		for len(baseRunes) < startCol+len([]rune(overlayLine)) {
-			baseRunes = append(baseRunes, ' ')
-		}
+		// Overlay by columns without breaking ANSI sequences.
+		// Keep the left part of the base line, replace the middle with overlay,
+		// and keep the right tail of the base line.
+		left := ansi.Cut(baseLine, 0, startCol)
+		right := ansi.Cut(baseLine, startCol+overlayWidth, width)
 
-		overlayRunes := []rune(overlayLine)
-		for j, r := range overlayRunes {
-			if startCol+j < len(baseRunes) {
-				baseRunes[startCol+j] = r
-			}
-		}
-
-		baseLines[row] = string(baseRunes)
+		line := left + overlayLine + right
+		// Ensure line doesn't overflow terminal width.
+		baseLines[row] = ansi.Truncate(line, width, "")
 	}
 
 	return strings.Join(baseLines, "\n")
@@ -1093,12 +1278,18 @@ func overlayCenter(base, overlay string, width, height int) string {
 // checkUniqueBasename returns an error message if a different note with the same
 // basename already exists in the vault. Returns "" if the name is available.
 func (a *App) checkUniqueBasename(relPath string) string {
+	return a.checkUniqueBasenameExcept(relPath, "")
+}
+
+// checkUniqueBasenameExcept is like checkUniqueBasename, but allows an existing
+// note at exceptPath to have the same basename (used for moves).
+func (a *App) checkUniqueBasenameExcept(relPath, exceptPath string) string {
 	if a.db == nil {
 		return ""
 	}
 	basename := filepath.Base(relPath)
 	existing, err := a.db.FindNoteByBasename(basename)
-	if err != nil || existing == "" || existing == relPath {
+	if err != nil || existing == "" || existing == relPath || (exceptPath != "" && existing == exceptPath) {
 		return ""
 	}
 	return fmt.Sprintf("%q already exists at %s", basename, existing)
