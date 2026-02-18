@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,6 +13,13 @@ import (
 // indexInitDoneMsg signals indexing is complete.
 type indexInitDoneMsg struct{ err error }
 
+// noteIndexedMsg signals a single file was (re)indexed.
+// relPath is relative to the vault root.
+type noteIndexedMsg struct {
+	relPath string
+	err     error
+}
+
 // initIndex starts the indexer in a goroutine.
 func (a *App) initIndex() tea.Cmd {
 	return func() tea.Msg {
@@ -21,6 +29,24 @@ func (a *App) initIndex() tea.Cmd {
 			}
 		}
 		return indexInitDoneMsg{}
+	}
+}
+
+func (a *App) indexFile(absPath string) tea.Cmd {
+	idx := a.indexer
+	vaultRoot := a.cfg.VaultPath
+	return func() tea.Msg {
+		if idx == nil {
+			return noteIndexedMsg{}
+		}
+		if err := idx.IndexFile(absPath); err != nil {
+			return noteIndexedMsg{err: err}
+		}
+		rel, err := filepath.Rel(vaultRoot, absPath)
+		if err != nil {
+			rel = absPath
+		}
+		return noteIndexedMsg{relPath: rel}
 	}
 }
 
