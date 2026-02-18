@@ -407,22 +407,18 @@ func (a *App) View() string {
 	minW, minH := a.minWindowSize()
 	if a.width < minW || a.height < minH {
 		msg := fmt.Sprintf("Window too small (%dx%d)\nMinimum supported: %dx%d", a.width, a.height, minW, minH)
-		bg := a.theme.StatusBg
+		// Use the terminal's default background so the placeholder matches whatever
+		// theme the user is running.
 		style := lipgloss.NewStyle().
 			Foreground(a.theme.Text).
-			Background(bg).
 			Padding(1, 2)
 		box := style.Render(msg)
-		// Clear background: fill the whole terminal with black, then center the message.
+
 		fillLines := a.height
 		if fillLines < 1 {
 			fillLines = 1
 		}
-		base := lipgloss.NewStyle().
-			Background(bg).
-			Width(a.width).
-			Height(a.height).
-			Render(strings.Repeat("\n", fillLines))
+		base := strings.Repeat("\n", fillLines)
 		return overlayCenter(base, box, a.width, a.height)
 	}
 
