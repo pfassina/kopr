@@ -143,6 +143,18 @@ func waitForOutput(nvim *nvimPTY) tea.Cmd {
 func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		// Ignore transient invalid sizes (some terminals report 0x0 during drag-resize).
+		if msg.Width <= 0 || msg.Height <= 0 {
+			debugf("WindowSizeMsg ignored: %dx%d", msg.Width, msg.Height)
+			return e, nil
+		}
+		// Avoid resizing the embedded terminal to extremely small sizes during a drag.
+		// We'll keep the last known-good frame and resize once dimensions stabilize.
+		if msg.Width < 30 || msg.Height < 10 {
+			debugf("WindowSizeMsg ignored (too small): %dx%d", msg.Width, msg.Height)
+			return e, nil
+		}
+		debugf("WindowSizeMsg: %dx%d started=%v splash=%v rpc=%v", msg.Width, msg.Height, e.started, e.showSplash, e.rpc != nil)
 		e.width = msg.Width
 		e.height = msg.Height
 		if !e.started {
@@ -154,8 +166,26 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 				e.err = err
 				return e, tea.Quit
 			}
+			// Resize / re-init the VT emulator. We've seen cases where simply resizing
+			// the emulator can result in a permanently blank render after some terminal
+			// resize sequences; recreating the emulator is cheap and robust.
 			if e.screen != nil {
-				e.screen.resize(e.width, e.height)
+				if err := e.screen.close(); err != nil {
+					e.err = err
+					return e, tea.Quit
+				}
+			}
+			e.screen = newVTScreen(e.width, e.height, e.nvim.file)
+
+			// Defensive: after some resize sequences terminals can end up with a blank
+			// frame until Neovim repaints. Force a redraw when dimensions change.
+			if e.rpc != nil && !e.showSplash {
+				debugf("rpc redraw! start")
+				if err := e.rpc.ExecCommand("redraw!"); err != nil {
+					e.err = err
+					return e, tea.Quit
+				}
+				debugf("rpc redraw! ok")
 			}
 		}
 		return e, nil
@@ -203,6 +233,7 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 		return e, nil
 
 	case vtOutputMsg:
+		debugf("vtOutputMsg: %d bytes screen=%v", len(msg.data), e.screen != nil)
 		if e.screen != nil {
 			if _, err := e.screen.write(msg.data); err != nil {
 				e.err = err
@@ -212,6 +243,7 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 		return e, waitForOutput(e.nvim)
 
 	case vtClosedMsg:
+		debugf("vtClosedMsg: %v", msg.err)
 		return e, tea.Quit
 
 	case tea.KeyMsg:

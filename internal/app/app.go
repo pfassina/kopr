@@ -221,6 +221,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(tea.Printf("fatal: %v\n", msg.err), tea.Quit)
 
 	case tea.WindowSizeMsg:
+		// Some terminals send transient 0x0 sizes (and very small intermediate sizes)
+		// during live resizes; ignore them and keep the last known-good layout.
+		if msg.Width <= 0 || msg.Height <= 0 {
+			return a, nil
+		}
+		// If the terminal gets *extremely* narrow, our multi-panel layout can end up
+		// in a broken/blank state. We prefer holding the previous layout until the
+		// user finishes resizing.
+		if msg.Width < 30 || msg.Height < 10 {
+			return a, nil
+		}
 		a.width = msg.Width
 		a.height = msg.Height
 		a.finder.SetSize(msg.Width, msg.Height)
@@ -242,9 +253,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.prompt.SetSize(promptW, layout.Height)
 
 		cmd := a.updateLayout()
+		// Force a full terminal repaint on resize; some terminals/bubbletea render
+		// paths can end up visually blank without an explicit clear.
 		if cmd != nil {
-			return a, cmd
+			return a, tea.Batch(tea.ClearScreen, cmd)
 		}
+		return a, tea.ClearScreen
 
 	case editor.ModeChangedMsg:
 		a.status.SetMode(modeDisplayName(msg.Mode))
@@ -408,10 +422,14 @@ func (a *App) View() string {
 		var columns []string
 
 		if showTree {
+			tw := layout.TreeWidth - 1
+			if tw < 0 {
+				tw = 0
+			}
 			borderStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder(), false, true, false, false).
 				BorderForeground(lipgloss.Color("240")).
-				Width(layout.TreeWidth - 1).
+				Width(tw).
 				Height(layout.Height)
 			columns = append(columns, borderStyle.Render(a.tree.View()))
 		}
@@ -422,10 +440,14 @@ func (a *App) View() string {
 		columns = append(columns, editorStyle.Render(editorView))
 
 		if showInfo {
+			iw := layout.InfoWidth - 1
+			if iw < 0 {
+				iw = 0
+			}
 			borderStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder(), false, false, false, true).
 				BorderForeground(lipgloss.Color("240")).
-				Width(layout.InfoWidth - 1).
+				Width(iw).
 				Height(layout.Height)
 			columns = append(columns, borderStyle.Render(a.info.View()))
 		}
@@ -765,7 +787,6 @@ func (a *App) handleSaveAsPrompt(value string, closeAfter bool) (cmd tea.Cmd, ok
 	return nil, true
 }
 
-
 // handleCreateNotePrompt validates and creates a new note from the overlay prompt.
 // Returns ok=false when the value is rejected and the prompt should remain visible.
 func (a *App) handleCreateNotePrompt(name string) (cmd tea.Cmd, ok bool) {
@@ -799,7 +820,6 @@ func (a *App) handleCreateNotePrompt(name string) (cmd tea.Cmd, ok bool) {
 	a.setFocus(focusEditor)
 	return nil, true
 }
-
 
 // handlePaste performs copy or move for files in the clipboard.
 func (a *App) handlePaste(msg panel.TreePasteMsg) tea.Cmd {
@@ -1006,9 +1026,13 @@ func (a *App) updateLayout() tea.Cmd {
 	a.status.SetWidth(a.width)
 	a.whichKey.SetWidth(a.width / 2)
 
+	editorHeight := layout.Height - 1 // -1 for editor title row
+	if editorHeight < 1 {
+		editorHeight = 1
+	}
 	editorSize := tea.WindowSizeMsg{
 		Width:  layout.EditorWidth,
-		Height: layout.Height - 1, // -1 for editor title row
+		Height: editorHeight,
 	}
 	var cmd tea.Cmd
 	a.editor, cmd = a.editor.Update(editorSize)
