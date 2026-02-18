@@ -312,6 +312,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case panel.PromptCancelledMsg:
 		return a, a.handlePromptCancelled()
 
+	case noteIndexedMsg:
+		if msg.err != nil {
+			return a, fatalCmd(fmt.Errorf("index note: %w", msg.err))
+		}
+		// If the user saved the currently open note, refresh backlinks in-place.
+		if msg.relPath != "" && msg.relPath == a.currentFile {
+			a.updateBacklinks(a.currentFile)
+		}
+		return a, nil
+
 	case indexInitDoneMsg:
 		if msg.err != nil {
 			// Fail fast and loud: indexing is a core feature.
@@ -487,16 +497,32 @@ func (a *App) handleNoteClose(save bool) tea.Cmd {
 }
 
 func (a *App) handleBufferWritten(path string) tea.Cmd {
+	// Always re-index on save so backlinks/search stay fresh.
+	cmds := []tea.Cmd{}
+	if a.indexer != nil && strings.HasSuffix(strings.ToLower(path), ".md") {
+		cmds = append(cmds, a.indexFile(path))
+	}
+
+	// Optional: format on save (scoped to the active buffer).
 	if !a.cfg.AutoFormatOnSave {
-		return nil
+		if len(cmds) == 0 {
+			return nil
+		}
+		return tea.Batch(cmds...)
 	}
 	if !strings.HasSuffix(strings.ToLower(path), ".md") {
-		return nil
+		if len(cmds) == 0 {
+			return nil
+		}
+		return tea.Batch(cmds...)
 	}
 
 	rpc := a.editor.GetRPC()
 	if rpc == nil {
-		return nil
+		if len(cmds) == 0 {
+			return nil
+		}
+		return tea.Batch(cmds...)
 	}
 
 	// Only format the currently active file.
@@ -505,10 +531,13 @@ func (a *App) handleBufferWritten(path string) tea.Cmd {
 		return fatalCmd(fmt.Errorf("nvim current file: %w", err))
 	}
 	if cur != path {
-		return nil
+		if len(cmds) == 0 {
+			return nil
+		}
+		return tea.Batch(cmds...)
 	}
 
-	return func() tea.Msg {
+	formatCmd := func() tea.Msg {
 		// Capture cursor so we can keep the user's position.
 		line, col, err := rpc.CursorPosition()
 		if err != nil {
@@ -558,6 +587,9 @@ func (a *App) handleBufferWritten(path string) tea.Cmd {
 		}
 		return nil
 	}
+
+	cmds = append(cmds, formatCmd)
+	return tea.Batch(cmds...)
 }
 
 // showSplash transitions the editor to the splash screen.
