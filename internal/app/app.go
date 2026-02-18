@@ -1038,7 +1038,7 @@ func (a *App) minWindowSize() (minW, minH int) {
 	// full UI and show a placeholder message.
 	//
 	// 80x24 is the classic baseline and still common on low-res displays.
-	return 80, 24
+	return 60, 24
 }
 
 func (a *App) updateLayout() tea.Cmd {
