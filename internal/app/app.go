@@ -765,70 +765,6 @@ func (a *App) handleSaveAsPrompt(value string, closeAfter bool) (cmd tea.Cmd, ok
 	return nil, true
 }
 
-// handleSaveAs saves an unnamed buffer with the given name.
-func (a *App) handleSaveAs(value string, closeAfter bool) tea.Cmd {
-	relPath := value
-	if !strings.HasSuffix(relPath, ".md") {
-		relPath += ".md"
-	}
-
-	if msg := a.checkUniqueBasename(relPath); msg != "" {
-		a.status.SetError(msg)
-		return nil
-	}
-
-	rpc := a.editor.GetRPC()
-	if rpc == nil {
-		return nil
-	}
-
-	// Get current buffer content before setting name
-	content, err := rpc.BufferContent()
-	if err != nil {
-		return nil
-	}
-
-	// Build content string
-	var buf strings.Builder
-	for i, line := range content {
-		buf.Write(line)
-		if i < len(content)-1 {
-			buf.WriteByte('\n')
-		}
-	}
-
-	// Create the file on disk via vault
-	fullPath, err := a.vault.CreateNote(relPath, buf.String())
-	if err != nil {
-		return nil
-	}
-
-	// Make the buffer modifiable, set name, and write
-	if err := rpc.ExecCommand("setlocal modifiable"); err != nil {
-		return fatalCmd(err)
-	}
-	if err := rpc.SetBufferName(fullPath); err != nil {
-		return fatalCmd(err)
-	}
-	// Remove BufWriteCmd interference by setting buftype back to normal
-	if err := rpc.ExecCommand("setlocal buftype="); err != nil {
-		return fatalCmd(err)
-	}
-	if err := rpc.WriteBuffer(); err != nil {
-		return fatalCmd(err)
-	}
-
-	a.status.SetFile(relPath)
-	a.currentFile = relPath
-	a.tree.Refresh()
-	a.updateBacklinks(relPath)
-
-	if closeAfter {
-		a.showSplash()
-	}
-
-	return nil
-}
 
 // handleCreateNotePrompt validates and creates a new note from the overlay prompt.
 // Returns ok=false when the value is rejected and the prompt should remain visible.
@@ -864,41 +800,6 @@ func (a *App) handleCreateNotePrompt(name string) (cmd tea.Cmd, ok bool) {
 	return nil, true
 }
 
-// handleCreateNote creates a new empty note or directory from the tree panel.
-func (a *App) handleCreateNote(name string) tea.Cmd {
-	// Directory creation: name ends with /
-	if strings.HasSuffix(name, "/") {
-		dirPath := strings.TrimSuffix(name, "/")
-		if err := a.vault.CreateDir(dirPath); err != nil {
-			return fatalCmd(err)
-		}
-		a.tree.Refresh()
-		return nil
-	}
-
-	relPath := name
-	if !strings.HasSuffix(relPath, ".md") {
-		relPath += ".md"
-	}
-
-	if msg := a.checkUniqueBasename(relPath); msg != "" {
-		a.status.SetError(msg)
-		return nil
-	}
-
-	content := fmt.Sprintf("---\ntitle: %s\n---\n\n", strings.TrimSuffix(name, ".md"))
-	fullPath, err := a.vault.CreateNote(relPath, content)
-	if err != nil {
-		return nil
-	}
-
-	a.openInEditor(fullPath)
-	a.status.SetFile(relPath)
-	a.currentFile = relPath
-	a.tree.Refresh()
-	a.setFocus(focusEditor)
-	return nil
-}
 
 // handlePaste performs copy or move for files in the clipboard.
 func (a *App) handlePaste(msg panel.TreePasteMsg) tea.Cmd {
