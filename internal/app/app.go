@@ -221,9 +221,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(tea.Printf("fatal: %v\n", msg.err), tea.Quit)
 
 	case tea.WindowSizeMsg:
+		// Some terminals send transient 0x0 sizes during live resizes; ignore them.
+		if msg.Width <= 0 || msg.Height <= 0 {
+			return a, nil
+		}
 		a.width = msg.Width
 		a.height = msg.Height
 		a.finder.SetSize(msg.Width, msg.Height)
+
+		minW, minH := a.minWindowSize()
+		if a.width < minW || a.height < minH {
+			return a, tea.ClearScreen
+		}
 
 		// Size prompt relative to the center/editor panel (Neovim buffer area), not the full screen.
 		showTree, showInfo := a.panelsVisible()
@@ -242,9 +251,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.prompt.SetSize(promptW, layout.Height)
 
 		cmd := a.updateLayout()
+		// Force a full terminal repaint on resize; some terminals/bubbletea render
+		// paths can end up visually blank without an explicit clear.
 		if cmd != nil {
-			return a, cmd
+			return a, tea.Batch(tea.ClearScreen, cmd)
 		}
+		return a, tea.ClearScreen
 
 	case editor.ModeChangedMsg:
 		a.status.SetMode(modeDisplayName(msg.Mode))
@@ -392,6 +404,24 @@ func (a *App) View() string {
 		return "Loading..."
 	}
 
+	minW, minH := a.minWindowSize()
+	if a.width < minW || a.height < minH {
+		msg := fmt.Sprintf("Window too small (%dx%d)\nMinimum supported: %dx%d", a.width, a.height, minW, minH)
+		// Use the terminal's default background so the placeholder matches whatever
+		// theme the user is running.
+		style := lipgloss.NewStyle().
+			Foreground(a.theme.Text).
+			Padding(1, 2)
+		box := style.Render(msg)
+
+		fillLines := a.height
+		if fillLines < 1 {
+			fillLines = 1
+		}
+		base := strings.Repeat("\n", fillLines)
+		return overlayCenter(base, box, a.width, a.height)
+	}
+
 	showTree, showInfo := a.panelsVisible()
 	layout := ComputeLayout(a.width, a.height, showTree, showInfo, a.cfg.TreeWidth, a.cfg.InfoWidth)
 
@@ -408,10 +438,14 @@ func (a *App) View() string {
 		var columns []string
 
 		if showTree {
+			tw := layout.TreeWidth - 1
+			if tw < 0 {
+				tw = 0
+			}
 			borderStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder(), false, true, false, false).
 				BorderForeground(lipgloss.Color("240")).
-				Width(layout.TreeWidth - 1).
+				Width(tw).
 				Height(layout.Height)
 			columns = append(columns, borderStyle.Render(a.tree.View()))
 		}
@@ -422,10 +456,14 @@ func (a *App) View() string {
 		columns = append(columns, editorStyle.Render(editorView))
 
 		if showInfo {
+			iw := layout.InfoWidth - 1
+			if iw < 0 {
+				iw = 0
+			}
 			borderStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder(), false, false, false, true).
 				BorderForeground(lipgloss.Color("240")).
-				Width(layout.InfoWidth - 1).
+				Width(iw).
 				Height(layout.Height)
 			columns = append(columns, borderStyle.Render(a.info.View()))
 		}
@@ -765,7 +803,6 @@ func (a *App) handleSaveAsPrompt(value string, closeAfter bool) (cmd tea.Cmd, ok
 	return nil, true
 }
 
-
 // handleCreateNotePrompt validates and creates a new note from the overlay prompt.
 // Returns ok=false when the value is rejected and the prompt should remain visible.
 func (a *App) handleCreateNotePrompt(name string) (cmd tea.Cmd, ok bool) {
@@ -799,7 +836,6 @@ func (a *App) handleCreateNotePrompt(name string) (cmd tea.Cmd, ok bool) {
 	a.setFocus(focusEditor)
 	return nil, true
 }
-
 
 // handlePaste performs copy or move for files in the clipboard.
 func (a *App) handlePaste(msg panel.TreePasteMsg) tea.Cmd {
@@ -997,6 +1033,14 @@ func (a *App) panelsVisible() (bool, bool) {
 	return a.showTree && !a.zenMode && !splash, a.showInfo && !a.zenMode && !splash
 }
 
+func (a *App) minWindowSize() (minW, minH int) {
+	// UX-driven minimum supported terminal size. Below this we stop rendering the
+	// full UI and show a placeholder message.
+	//
+	// 80x24 is the classic baseline and still common on low-res displays.
+	return 60, 24
+}
+
 func (a *App) updateLayout() tea.Cmd {
 	showTree, showInfo := a.panelsVisible()
 	layout := ComputeLayout(a.width, a.height, showTree, showInfo, a.cfg.TreeWidth, a.cfg.InfoWidth)
@@ -1006,9 +1050,13 @@ func (a *App) updateLayout() tea.Cmd {
 	a.status.SetWidth(a.width)
 	a.whichKey.SetWidth(a.width / 2)
 
+	editorHeight := layout.Height - 1 // -1 for editor title row
+	if editorHeight < 1 {
+		editorHeight = 1
+	}
 	editorSize := tea.WindowSizeMsg{
 		Width:  layout.EditorWidth,
-		Height: layout.Height - 1, // -1 for editor title row
+		Height: editorHeight,
 	}
 	var cmd tea.Cmd
 	a.editor, cmd = a.editor.Update(editorSize)

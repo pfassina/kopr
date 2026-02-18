@@ -48,6 +48,10 @@ func (v *vtScreen) write(p []byte) (int, error) {
 	return v.term.Write(p)
 }
 
+// resize is kept for clarity in case we stop recreating the emulator on
+// WindowSizeMsg; currently we recreate the emulator, so this is unused.
+//
+//nolint:unused
 func (v *vtScreen) resize(width, height int) {
 	v.term.Resize(width, height)
 }
