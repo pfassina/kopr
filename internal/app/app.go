@@ -407,9 +407,10 @@ func (a *App) View() string {
 	minW, minH := a.minWindowSize()
 	if a.width < minW || a.height < minH {
 		msg := fmt.Sprintf("Window too small (%dx%d). Minimum supported: %dx%d", a.width, a.height, minW, minH)
+		bg := a.theme.StatusBg
 		style := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252")).
-			Background(lipgloss.Color("0")).
+			Foreground(a.theme.Text).
+			Background(bg).
 			Padding(1, 2)
 		box := style.Render(msg)
 		// Clear background: fill the whole terminal with black, then center the message.
@@ -418,7 +419,7 @@ func (a *App) View() string {
 			fillLines = 1
 		}
 		base := lipgloss.NewStyle().
-			Background(lipgloss.Color("0")).
+			Background(bg).
 			Width(a.width).
 			Height(a.height).
 			Render(strings.Repeat("\n", fillLines))
