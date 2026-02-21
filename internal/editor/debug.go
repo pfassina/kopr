@@ -26,5 +26,5 @@ func debugf(format string, args ...any) {
 	if debugFile == nil {
 		return
 	}
-	_, _ = fmt.Fprintf(debugFile, "%s "+format+"\n", append([]any{time.Now().Format(time.RFC3339Nano)}, args...)...)
+	fmt.Fprintf(debugFile, "%s "+format+"\n", append([]any{time.Now().Format(time.RFC3339Nano)}, args...)...) //nolint:errcheck // debug log
 }

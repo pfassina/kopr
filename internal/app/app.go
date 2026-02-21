@@ -93,7 +93,10 @@ func New(cfg config.Config) App {
 
 	f := panel.NewFinder()
 	store := session.NewStore(cfg.VaultPath)
-	state, _ := store.Load()
+	state, err := store.Load()
+	if err != nil {
+		state = session.Default()
+	}
 
 	a := App{
 		cfg:      cfg,
@@ -667,7 +670,8 @@ func (a *App) handleBufferWritten(path string) tea.Cmd {
 		if len(lines) > 0 && line > len(lines) {
 			line = len(lines)
 		}
-		_ = rpc.SetCursorPosition(line, col)
+		// Best-effort cursor restoration after format.
+		rpc.SetCursorPosition(line, col) //nolint:errcheck
 
 		// Write without triggering autocommands to avoid infinite loops.
 		if err := rpc.ExecCommand("noautocmd write"); err != nil {

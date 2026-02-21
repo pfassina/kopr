@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -55,8 +56,7 @@ func ConnectRPC(socketPath string, onMode func(NvimMode)) (*RPC, error) {
 	}
 
 	if err := rpc.setupModeChanged(); err != nil {
-		_ = client.Close() // best-effort; we're already failing setup
-		return nil, fmt.Errorf("setup mode events: %w", err)
+		return nil, errors.Join(fmt.Errorf("setup mode events: %w", err), client.Close())
 	}
 
 	return rpc, nil
@@ -346,9 +346,9 @@ func (r *RPC) Quit() {
 		return
 	}
 	// Remove the QuitPre autocmd that normally aborts :q/:wq.
-	_ = r.client.ExecLua("vim.api.nvim_clear_autocmds({event='QuitPre'})", nil)
-	// Errors are expected here since nvim may close the connection mid-command.
-	_ = r.client.Command("qa!")
+	// Errors are expected during shutdown: Neovim may close the connection mid-command.
+	r.client.ExecLua("vim.api.nvim_clear_autocmds({event='QuitPre'})", nil) //nolint:errcheck // shutdown
+	r.client.Command("qa!")                                                 //nolint:errcheck // shutdown
 }
 
 // ApplyColorscheme sets the active colorscheme in Neovim.
@@ -404,6 +404,14 @@ func intToHex(v interface{}) string {
 		return fmt.Sprintf("#%06x", int64(n))
 	default:
 		return ""
+	}
+}
+
+// ClearHighlightBgs clears explicit backgrounds on common highlight groups
+// so Neovim uses the terminal default, preserving terminal transparency.
+func (r *RPC) ClearHighlightBgs() {
+	for _, g := range []string{"Normal", "NonText", "EndOfBuffer", "FoldColumn", "SignColumn", "NormalNC"} {
+		r.ExecCommand("hi " + g + " guibg=NONE") //nolint:errcheck // cosmetic; group may not exist
 	}
 }
 

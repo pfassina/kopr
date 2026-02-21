@@ -420,12 +420,7 @@ func (e Editor) applyColorscheme() tea.Cmd {
 		}
 		// Clear explicit backgrounds so Neovim uses the terminal default,
 		// preserving terminal transparency.
-		_ = rpc.ExecCommand("hi Normal guibg=NONE")
-		_ = rpc.ExecCommand("hi NonText guibg=NONE")
-		_ = rpc.ExecCommand("hi EndOfBuffer guibg=NONE")
-		_ = rpc.ExecCommand("hi FoldColumn guibg=NONE")
-		_ = rpc.ExecCommand("hi SignColumn guibg=NONE")
-		_ = rpc.ExecCommand("hi NormalNC guibg=NONE")
+		rpc.ClearHighlightBgs()
 		return ColorsReadyMsg{Colors: colors}
 	}
 }

@@ -25,7 +25,10 @@ func ConfigDir() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		return filepath.Join(xdg, "kopr")
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
 	return filepath.Join(home, ".config", "kopr")
 }
 
@@ -84,7 +87,10 @@ func SaveFile(vaultPath string) error {
 	}
 
 	// Store with ~ for readability if under home dir.
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
 	display := vaultPath
 	if home != "" && strings.HasPrefix(vaultPath, home+string(os.PathSeparator)) {
 		display = "~" + vaultPath[len(home):]
@@ -112,7 +118,10 @@ func ExpandHome(path string) string {
 	if !strings.HasPrefix(path, "~") {
 		return path
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
 	if path == "~" {
 		return home
 	}

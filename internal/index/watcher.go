@@ -1,6 +1,7 @@
 package index
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,8 +54,7 @@ func NewWatcher(indexer *Indexer, root string, onChange func(), onError func(err
 		}
 		return nil
 	}); err != nil {
-		_ = fw.Close()
-		return nil, err
+		return nil, errors.Join(err, fw.Close())
 	}
 
 	return w, nil
