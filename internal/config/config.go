@@ -9,7 +9,8 @@ type Config struct {
 	VaultPath       string
 	Listen          string
 	Serve           bool
-	Theme           string
+	Colorscheme     string // vim colorscheme name passed to :colorscheme
+	ColorschemeRepo string // GitHub owner/repo to git-clone (optional)
 	TreeWidth       int
 	InfoWidth       int
 	ShowTree        bool
@@ -30,8 +31,9 @@ func Default() Config {
 		VaultPath:     filepath.Join(home, "notes"),
 		Listen:        ":2222",
 		Serve:         false,
-		Theme:         "catppuccin",
-		TreeWidth:     30,
+		Colorscheme:     "no-clown-fiesta",
+		ColorschemeRepo: "aktersnurra/no-clown-fiesta.nvim",
+		TreeWidth:       30,
 		InfoWidth:     30,
 		ShowTree:      true,
 		ShowInfo:      true,

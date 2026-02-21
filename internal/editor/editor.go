@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/pfassina/kopr/internal/theme"
 )
 
 // Messages
@@ -53,6 +55,13 @@ type FollowLinkMsg struct{}
 // GoBackMsg is sent when the user presses gb to go back to the previous note.
 type GoBackMsg struct{}
 
+// ColorsReadyMsg is sent after the colorscheme is applied and colors are extracted.
+// If Err is set, the colorscheme failed to load and Colors will be nil.
+type ColorsReadyMsg struct {
+	Colors map[string][2]string
+	Err    error
+}
+
 // Editor is a Bubble Tea model that embeds Neovim in a PTY
 // and renders it via a VT emulator, with RPC for programmatic control.
 type Editor struct {
@@ -61,6 +70,8 @@ type Editor struct {
 	vaultPath   string
 	socketPath  string
 	profileMode ProfileMode
+	colorscheme string
+	theme       *theme.Theme
 	nvim        *nvimPTY
 	rpc         *RPC
 	screen      *vtScreen
@@ -72,10 +83,14 @@ type Editor struct {
 	showSplash  bool
 }
 
-func New(vaultPath string, profileMode ProfileMode) Editor {
+// SetTheme sets the color theme for the editor splash screen.
+func (e *Editor) SetTheme(th *theme.Theme) { e.theme = th }
+
+func New(vaultPath string, profileMode ProfileMode, colorscheme string) Editor {
 	return Editor{
 		vaultPath:   vaultPath,
 		profileMode: profileMode,
+		colorscheme: colorscheme,
 		mode:        ModeNormal,
 		focused:     true,
 		showSplash:  true,
@@ -213,12 +228,14 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 			e.err = err
 			return e, tea.Quit
 		}
+		// Apply configured colorscheme and extract colors for TUI
+		colorCmd := e.applyColorscheme()
 		// Load splash buffer so neovim starts in a clean state
 		if err := e.rpc.LoadSplashBuffer(); err != nil {
 			e.err = err
 			return e, tea.Quit
 		}
-		return e, nil
+		return e, colorCmd
 
 	case editorErrorMsg:
 		e.err = msg.err
@@ -273,9 +290,10 @@ func (e Editor) View() string {
 }
 
 func (e Editor) renderSplash() string {
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	th := e.theme
+	dim := lipgloss.NewStyle().Foreground(th.Dim)
+	accent := lipgloss.NewStyle().Foreground(th.Accent).Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(th.Text)
 
 	var b strings.Builder
 
@@ -378,6 +396,38 @@ func (e *Editor) OpenFile(path string) error {
 	}
 	e.showSplash = false
 	return e.rpc.OpenFile(path)
+}
+
+// applyColorscheme applies the configured colorscheme via RPC and returns a
+// command that extracts colors and sends ColorsReadyMsg to the app.
+func (e Editor) applyColorscheme() tea.Cmd {
+	if e.rpc == nil || e.colorscheme == "" {
+		return nil
+	}
+	rpc := e.rpc
+	cs := e.colorscheme
+	return func() tea.Msg {
+		if err := rpc.ApplyColorscheme(cs); err != nil {
+			debugf("apply colorscheme %q failed: %v", cs, err)
+			return ColorsReadyMsg{Err: fmt.Errorf("colorscheme %q: %w", cs, err)}
+		}
+		// Extract colors before clearing backgrounds so we capture the
+		// colorscheme's intended palette for TUI elements.
+		colors, err := rpc.ExtractColors()
+		if err != nil {
+			debugf("extract colors failed: %v", err)
+			colors = nil
+		}
+		// Clear explicit backgrounds so Neovim uses the terminal default,
+		// preserving terminal transparency.
+		_ = rpc.ExecCommand("hi Normal guibg=NONE")
+		_ = rpc.ExecCommand("hi NonText guibg=NONE")
+		_ = rpc.ExecCommand("hi EndOfBuffer guibg=NONE")
+		_ = rpc.ExecCommand("hi FoldColumn guibg=NONE")
+		_ = rpc.ExecCommand("hi SignColumn guibg=NONE")
+		_ = rpc.ExecCommand("hi NormalNC guibg=NONE")
+		return ColorsReadyMsg{Colors: colors}
+	}
 }
 
 func (e *Editor) Close() {

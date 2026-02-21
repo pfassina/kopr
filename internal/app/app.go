@@ -16,6 +16,7 @@ import (
 	"github.com/pfassina/kopr/internal/markdown"
 	"github.com/pfassina/kopr/internal/panel"
 	"github.com/pfassina/kopr/internal/session"
+	"github.com/pfassina/kopr/internal/theme"
 	"github.com/pfassina/kopr/internal/vault"
 )
 
@@ -49,7 +50,7 @@ type App struct {
 	indexer  *index.Indexer
 	watcher  *index.Watcher
 	store    *session.Store
-	theme    Theme
+	theme    theme.Theme
 	width    int
 	height   int
 	focused  focusedPanel
@@ -96,7 +97,7 @@ func New(cfg config.Config) App {
 
 	a := App{
 		cfg:      cfg,
-		editor:   editor.New(cfg.VaultPath, editor.ProfileMode(cfg.NvimMode)),
+		editor:   editor.New(cfg.VaultPath, editor.ProfileMode(cfg.NvimMode), cfg.Colorscheme),
 		tree:     t,
 		info:     panel.NewInfo(),
 		status:   panel.NewStatus(cfg.VaultPath),
@@ -105,13 +106,19 @@ func New(cfg config.Config) App {
 		prompt:   panel.NewPrompt(),
 		vault:    v,
 		store:    store,
-		theme:    GetTheme(cfg.Theme),
+		theme:    theme.DefaultTheme(),
 		focused:  focusEditor,
 		showTree: state.ShowTree,
 		showInfo: state.ShowInfo,
 	}
 	a.initLeader()
-	a.tree.SetAccent(a.theme.Accent)
+	a.tree.SetTheme(&a.theme)
+	a.info.SetTheme(&a.theme)
+	a.finder.SetTheme(&a.theme)
+	a.prompt.SetTheme(&a.theme)
+	a.status.SetTheme(&a.theme)
+	a.whichKey.SetTheme(&a.theme)
+	a.editor.SetTheme(&a.theme)
 
 	// Initialize index
 	dbPath := filepath.Join(cfg.VaultPath, ".kopr", "index.db")
@@ -356,6 +363,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case editor.ColorsReadyMsg:
+		if msg.Err != nil {
+			a.status.SetError(msg.Err.Error())
+			return a, nil
+		}
+		if msg.Colors != nil {
+			updated := theme.FromExtracted(msg.Colors, a.theme)
+			a.theme = updated
+			// Re-set pointers since we replaced the struct value.
+			a.tree.SetTheme(&a.theme)
+			a.info.SetTheme(&a.theme)
+			a.finder.SetTheme(&a.theme)
+			a.prompt.SetTheme(&a.theme)
+			a.status.SetTheme(&a.theme)
+			a.whichKey.SetTheme(&a.theme)
+			a.editor.SetTheme(&a.theme)
+		}
+		return a, nil
+
 	case indexInitDoneMsg:
 		if msg.err != nil {
 			// Fail fast and loud: indexing is a core feature.
@@ -435,7 +461,10 @@ func (a *App) View() string {
 	var main string
 
 	if !showTree && !showInfo {
-		main = editorView
+		main = lipgloss.NewStyle().
+			Width(layout.EditorWidth).
+			Height(layout.Height).
+			Render(editorView)
 	} else {
 		var columns []string
 
@@ -446,7 +475,7 @@ func (a *App) View() string {
 			}
 			borderStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder(), false, true, false, false).
-				BorderForeground(lipgloss.Color("240")).
+				BorderForeground(a.theme.Border).
 				Width(tw).
 				Height(layout.Height)
 			columns = append(columns, borderStyle.Render(a.tree.View()))
@@ -464,7 +493,7 @@ func (a *App) View() string {
 			}
 			borderStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder(), false, false, false, true).
-				BorderForeground(lipgloss.Color("240")).
+				BorderForeground(a.theme.Border).
 				Width(iw).
 				Height(layout.Height)
 			columns = append(columns, borderStyle.Render(a.info.View()))
@@ -510,7 +539,6 @@ func (a *App) Close() {
 			ShowInfo:  a.showInfo,
 			TreeWidth: a.cfg.TreeWidth,
 			InfoWidth: a.cfg.InfoWidth,
-			Theme:     a.theme.Name,
 		}
 		if err := a.store.Save(state); err != nil {
 			fmt.Fprintln(os.Stderr, "fatal: save session state:", err)
@@ -1102,13 +1130,13 @@ func (a *App) editorTitle() string {
 	if a.focused == focusEditor {
 		style = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("212")).
+			Foreground(a.theme.Accent).
 			Underline(true).
 			Padding(0, 1)
 	} else {
 		style = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("240")).
+			Foreground(a.theme.Dim).
 			Padding(0, 1)
 	}
 

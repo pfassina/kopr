@@ -35,5 +35,12 @@ SSH / Local Terminal
 - `internal/index`: SQLite schema, indexing pipeline, watcher, search/backlinks.
 - `internal/vault`: filesystem operations and helpers (templates/daily/inbox/link rewrite).
 - `internal/panel`: UI panels (tree/info/finder/status/prompt/which-key).
+- `internal/theme`: color palette shared by all panels; extracted from Neovim highlight groups.
 - `internal/config`: TOML config + first-run setup.
 - `internal/session`: persists UI state under `<vault>/.kopr/`.
+
+## Theming
+
+All TUI panels hold a `*theme.Theme` pointer set during `app.New()`. When Neovim's RPC connects, `App` applies the configured colorscheme, extracts highlight group colors via `nvim_get_hl`, and maps them onto the `Theme` struct in-place. Every panel's next `View()` call picks up the new colors automatically.
+
+Config fields: `colorscheme` (passed to `:colorscheme <name>`) and `colorscheme_repo` (GitHub `owner/repo` to auto-clone into the managed plugin directory).

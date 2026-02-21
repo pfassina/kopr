@@ -13,6 +13,7 @@ import (
 	"github.com/pfassina/kopr/internal/config"
 	"github.com/pfassina/kopr/internal/editor"
 	"github.com/pfassina/kopr/internal/markdown"
+	"github.com/pfassina/kopr/internal/theme"
 )
 
 // Binding represents a leader key binding.
@@ -360,12 +361,12 @@ func (a *App) ReloadConfig() {
 	// Reload TOML config
 	cfg := config.Default()
 	if _, err := config.LoadFile(&cfg); err == nil {
-		a.cfg.Theme = cfg.Theme
+		a.cfg.Colorscheme = cfg.Colorscheme
+		a.cfg.ColorschemeRepo = cfg.ColorschemeRepo
 		a.cfg.LeaderTimeout = cfg.LeaderTimeout
-		a.theme = GetTheme(cfg.Theme)
 	}
 
-	// Reload Neovim config
+	// Reload Neovim config and re-apply colorscheme
 	rpc := a.editor.GetRPC()
 	if rpc != nil {
 		if err := rpc.ExecLua("dofile(vim.fn.stdpath('config') .. '/init.lua')", nil); err != nil {
@@ -373,6 +374,29 @@ func (a *App) ReloadConfig() {
 				a.program.Send(fatalErrorMsg{err: err})
 			}
 			return
+		}
+		// Re-apply colorscheme and extract new colors
+		if a.cfg.Colorscheme != "" {
+			if err := rpc.ApplyColorscheme(a.cfg.Colorscheme); err != nil {
+				a.status.SetError(fmt.Sprintf("colorscheme %q: %v", a.cfg.Colorscheme, err))
+			} else {
+				if colors, err := rpc.ExtractColors(); err == nil && colors != nil {
+					a.theme = theme.FromExtracted(colors, a.theme)
+					a.tree.SetTheme(&a.theme)
+					a.info.SetTheme(&a.theme)
+					a.finder.SetTheme(&a.theme)
+					a.prompt.SetTheme(&a.theme)
+					a.status.SetTheme(&a.theme)
+					a.whichKey.SetTheme(&a.theme)
+					a.editor.SetTheme(&a.theme)
+				}
+				_ = rpc.ExecCommand("hi Normal guibg=NONE")
+				_ = rpc.ExecCommand("hi NonText guibg=NONE")
+				_ = rpc.ExecCommand("hi EndOfBuffer guibg=NONE")
+				_ = rpc.ExecCommand("hi FoldColumn guibg=NONE")
+				_ = rpc.ExecCommand("hi SignColumn guibg=NONE")
+				_ = rpc.ExecCommand("hi NormalNC guibg=NONE")
+			}
 		}
 	}
 }
