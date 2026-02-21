@@ -70,7 +70,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error creating vault dir:", err)
 		os.Exit(1)
 	}
-	_ = os.MkdirAll(filepath.Join(cfg.VaultPath, ".kopr"), 0755)
+	if err := os.MkdirAll(filepath.Join(cfg.VaultPath, ".kopr"), 0755); err != nil {
+		fmt.Fprintln(os.Stderr, "error creating .kopr dir:", err)
+		os.Exit(1)
+	}
 
 	if err := editor.CheckNvimVersion(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -104,7 +107,10 @@ func main() {
 func runLocal(cfg config.Config) {
 	// Ensure lipgloss/termenv uses truecolor so extracted colorscheme colors
 	// render accurately instead of being approximated to the 256-color palette.
-	_ = os.Setenv("COLORTERM", "truecolor") // hint for termenv color profile detection
+	if err := os.Setenv("COLORTERM", "truecolor"); err != nil {
+		fmt.Fprintln(os.Stderr, "error setting COLORTERM:", err)
+		os.Exit(1)
+	}
 
 	a := app.New(cfg)
 	p := tea.NewProgram(&a, tea.WithAltScreen(), tea.WithMouseCellMotion())
@@ -125,7 +131,9 @@ func runServe(cfg config.Config) {
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sig
-		_ = s.Close()
+		if err := s.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "error closing server: %v\n", err)
+		}
 	}()
 
 	if err := s.ListenAndServe(); err != nil {

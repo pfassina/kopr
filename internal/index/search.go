@@ -2,6 +2,7 @@ package index
 
 import (
 	"database/sql"
+	"errors"
 )
 
 // SearchResult represents a single search result.
@@ -51,14 +52,12 @@ func (db *DB) Search(query string, limit int) ([]SearchResult, error) {
 	for rows.Next() {
 		var r SearchResult
 		if err := rows.Scan(&r.ID, &r.Path, &r.Title, &r.Rank); err != nil {
-			_ = rows.Close()
-			return nil, err
+			return nil, errors.Join(err, rows.Close())
 		}
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
+		return nil, errors.Join(err, rows.Close())
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -88,14 +87,12 @@ func (db *DB) SearchFiles(query string, limit int) ([]SearchResult, error) {
 	for rows.Next() {
 		var r SearchResult
 		if err := rows.Scan(&r.ID, &r.Path, &r.Title, &r.Rank); err != nil {
-			_ = rows.Close()
-			return nil, err
+			return nil, errors.Join(err, rows.Close())
 		}
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
+		return nil, errors.Join(err, rows.Close())
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -123,14 +120,12 @@ func (db *DB) ListAllNotes(limit int) ([]SearchResult, error) {
 	for rows.Next() {
 		var r SearchResult
 		if err := rows.Scan(&r.ID, &r.Path, &r.Title, &r.Rank); err != nil {
-			_ = rows.Close()
-			return nil, err
+			return nil, errors.Join(err, rows.Close())
 		}
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
+		return nil, errors.Join(err, rows.Close())
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -157,14 +152,12 @@ func (db *DB) GetBacklinks(targetPath string) ([]BacklinkResult, error) {
 	for rows.Next() {
 		var r BacklinkResult
 		if err := rows.Scan(&r.SourcePath, &r.SourceTitle, &r.Line, &r.Col); err != nil {
-			_ = rows.Close()
-			return nil, err
+			return nil, errors.Join(err, rows.Close())
 		}
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
+		return nil, errors.Join(err, rows.Close())
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -221,14 +214,12 @@ func (db *DB) SearchHeadings(query string, limit int) ([]HeadingResult, error) {
 	for rows.Next() {
 		var r HeadingResult
 		if err := rows.Scan(&r.NoteID, &r.NotePath, &r.Level, &r.Text, &r.Line); err != nil {
-			_ = rows.Close()
-			return nil, err
+			return nil, errors.Join(err, rows.Close())
 		}
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
+		return nil, errors.Join(err, rows.Close())
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
