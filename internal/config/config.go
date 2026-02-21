@@ -26,7 +26,10 @@ type Config struct {
 }
 
 func Default() Config {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
 	return Config{
 		VaultPath:     filepath.Join(home, "notes"),
 		Listen:        ":2222",

@@ -235,7 +235,10 @@ func (a *App) CreateDailyNote() {
 		return
 	}
 	a.openInEditor(path)
-	rel, _ := filepath.Rel(a.cfg.VaultPath, path)
+	rel, err := filepath.Rel(a.cfg.VaultPath, path)
+	if err != nil {
+		rel = filepath.Base(path)
+	}
 	a.status.SetFile(rel)
 	a.currentFile = rel
 	a.tree.Refresh()
@@ -247,7 +250,10 @@ func (a *App) CreateInboxNote() {
 		return
 	}
 	a.openInEditor(path)
-	rel, _ := filepath.Rel(a.cfg.VaultPath, path)
+	rel, err := filepath.Rel(a.cfg.VaultPath, path)
+	if err != nil {
+		rel = filepath.Base(path)
+	}
 	a.status.SetFile(rel)
 	a.currentFile = rel
 	a.tree.Refresh()
@@ -265,7 +271,10 @@ func (a *App) InsertTemplate() {
 			return
 		}
 		a.openInEditor(path)
-		rel, _ := filepath.Rel(a.cfg.VaultPath, path)
+		rel, err := filepath.Rel(a.cfg.VaultPath, path)
+		if err != nil {
+			rel = filepath.Base(path)
+		}
 		a.status.SetFile(rel)
 		a.currentFile = rel
 		a.tree.Refresh()
@@ -311,8 +320,8 @@ func (a *App) FollowLink() {
 	basename := filepath.Base(markdown.ResolveWikiLinkTarget(link.Target))
 	targetPath := ""
 	if a.db != nil {
-		resolved, _ := a.db.FindNoteByBasename(basename)
-		if resolved != "" {
+		resolved, err := a.db.FindNoteByBasename(basename)
+		if err == nil && resolved != "" {
 			targetPath = resolved
 		}
 	}
@@ -390,12 +399,7 @@ func (a *App) ReloadConfig() {
 					a.whichKey.SetTheme(&a.theme)
 					a.editor.SetTheme(&a.theme)
 				}
-				_ = rpc.ExecCommand("hi Normal guibg=NONE")
-				_ = rpc.ExecCommand("hi NonText guibg=NONE")
-				_ = rpc.ExecCommand("hi EndOfBuffer guibg=NONE")
-				_ = rpc.ExecCommand("hi FoldColumn guibg=NONE")
-				_ = rpc.ExecCommand("hi SignColumn guibg=NONE")
-				_ = rpc.ExecCommand("hi NormalNC guibg=NONE")
+				rpc.ClearHighlightBgs()
 			}
 		}
 	}

@@ -34,7 +34,10 @@ func (v *Vault) ListEntries() ([]Entry, error) {
 			return nil // skip errors
 		}
 
-		rel, _ := filepath.Rel(v.Root, path)
+		rel, err := filepath.Rel(v.Root, path)
+		if err != nil {
+			return nil
+		}
 		if rel == "." {
 			return nil
 		}

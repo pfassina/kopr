@@ -73,7 +73,10 @@ func (idx *Indexer) IndexFile(absPath string) error {
 
 	// Check if file has changed
 	hash := fmt.Sprintf("%x", sha256.Sum256(content))
-	existingHash, _ := idx.db.GetNoteHash(relPath)
+	existingHash, err := idx.db.GetNoteHash(relPath)
+	if err != nil {
+		existingHash = "" // treat as changed; will re-index
+	}
 	if hash == existingHash {
 		return nil // unchanged
 	}

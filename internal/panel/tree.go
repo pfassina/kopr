@@ -94,7 +94,10 @@ func NewTree(v *vault.Vault) Tree {
 func (t *Tree) SetTheme(th *theme.Theme) { t.theme = th }
 
 func (t *Tree) Refresh() {
-	entries, _ := t.vault.ListEntries()
+	entries, err := t.vault.ListEntries()
+	if err != nil {
+		entries = nil
+	}
 	t.allEntries = entries
 	t.rebuildVisible()
 	t.pruneStale()

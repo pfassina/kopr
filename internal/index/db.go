@@ -2,6 +2,7 @@ package index
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -153,15 +154,11 @@ func (db *DB) UpsertNote(path, title, slug, status, hash string, modTime, size i
 
 // UpdateFTS updates the FTS index for a note.
 func (db *DB) UpdateFTS(noteID int64, title, content, tags, headings string) error {
-	// Delete old FTS entry
-	_, err := db.conn.Exec("INSERT INTO notes_fts(notes_fts, rowid, title, content, tags, headings) VALUES('delete', ?, '', '', '', '')", noteID)
-	if err != nil {
-		// Ignore delete errors for new entries; the insert below will populate the row.
-		_ = err
-	}
+	// Delete old FTS entry; ignore errors for new entries that have no prior row.
+	db.conn.Exec("INSERT INTO notes_fts(notes_fts, rowid, title, content, tags, headings) VALUES('delete', ?, '', '', '', '')", noteID) //nolint:errcheck
 
 	// Insert new FTS entry
-	_, err = db.conn.Exec("INSERT INTO notes_fts(rowid, title, content, tags, headings) VALUES(?, ?, ?, ?, ?)",
+	_, err := db.conn.Exec("INSERT INTO notes_fts(rowid, title, content, tags, headings) VALUES(?, ?, ?, ?, ?)",
 		noteID, title, content, tags, headings)
 	return err
 }
@@ -255,8 +252,6 @@ func (db *DB) migrate() error {
 	if err != nil {
 		return fmt.Errorf("read note paths: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
 	var paths []string
 	for rows.Next() {
 		var p string
@@ -296,12 +291,12 @@ func (db *DB) migrate() error {
 	return nil
 }
 
-func (db *DB) hasColumn(table, col string) (bool, error) {
+func (db *DB) hasColumn(table, col string) (has bool, err error) {
 	rows, err := db.conn.Query("PRAGMA table_info(" + table + ")")
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	for rows.Next() {
 		var cid int
 		var name, ctype string
