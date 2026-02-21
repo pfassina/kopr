@@ -501,7 +501,7 @@ func (t Tree) renderHelp() string {
 
 	var sb strings.Builder
 	for _, l := range lines {
-		sb.WriteString(fmt.Sprintf("  %s  %s\n", key.Render(fmt.Sprintf("%-5s", l.k)), dim.Render(l.v)))
+		fmt.Fprintf(&sb, "  %s  %s\n", key.Render(fmt.Sprintf("%-5s", l.k)), dim.Render(l.v))
 	}
 
 	return border.Render(strings.TrimRight(sb.String(), "\n"))
