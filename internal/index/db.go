@@ -22,8 +22,6 @@ CREATE TABLE IF NOT EXISTS notes (
     hash TEXT NOT NULL DEFAULT ''
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_basename_key ON notes(basename_key);
-
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
     title, content, tags, headings,
     content=notes, content_rowid=id,

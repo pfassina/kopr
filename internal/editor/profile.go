@@ -68,6 +68,45 @@ func EnsureProfile(mode ProfileMode) error {
 	return nil
 }
 
+// EnsureThemePlugin clones a colorscheme plugin from GitHub if not already present.
+// The repo argument is a GitHub "owner/repo" string (e.g. "catppuccin/nvim").
+// If repo is empty, this is a no-op.
+func EnsureThemePlugin(repo string) error {
+	if repo == "" {
+		return nil
+	}
+
+	dataDir, err := DataDir()
+	if err != nil {
+		return err
+	}
+	packDir := filepath.Join(dataDir, "site", "pack", "kopr", "start")
+	if err := os.MkdirAll(packDir, 0755); err != nil {
+		return fmt.Errorf("create pack dir: %w", err)
+	}
+
+	// Use the repo portion after the slash as the directory name.
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("invalid colorscheme_repo %q: expected owner/repo", repo)
+	}
+	name := parts[1]
+
+	dest := filepath.Join(packDir, name)
+	if _, err := os.Stat(dest); err == nil {
+		return nil // already installed
+	}
+
+	url := "https://github.com/" + repo + ".git"
+	cmd := exec.Command("git", "clone", "--depth", "1", url, dest)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("clone colorscheme %s: %w", repo, err)
+	}
+	return nil
+}
+
 // ResetProfile overwrites init.lua with the embedded default.
 func ResetProfile() error {
 	dir, err := ConfigDir()
@@ -105,7 +144,6 @@ var managedPlugins = []struct {
 	name string
 	url  string
 }{
-	{"no-clown-fiesta.nvim", "https://github.com/aktersnurra/no-clown-fiesta.nvim.git"},
 	{"render-markdown.nvim", "https://github.com/MeanderingProgrammer/render-markdown.nvim.git"},
 }
 
@@ -185,5 +223,6 @@ func NvimEnv() []string {
 	return []string{
 		"NVIM_APPNAME=kopr",
 		"TERM=xterm-256color",
+		"COLORTERM=truecolor",
 	}
 }

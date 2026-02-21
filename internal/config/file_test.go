@@ -50,7 +50,7 @@ func TestLoadFile_Partial(t *testing.T) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`theme = "dracula"`+"\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`colorscheme = "dracula"`+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -62,8 +62,8 @@ func TestLoadFile_Partial(t *testing.T) {
 	if !exists {
 		t.Error("LoadFile should return true for existing file")
 	}
-	if cfg.Theme != "dracula" {
-		t.Errorf("Theme = %q, want %q", cfg.Theme, "dracula")
+	if cfg.Colorscheme != "dracula" {
+		t.Errorf("Colorscheme = %q, want %q", cfg.Colorscheme, "dracula")
 	}
 	// VaultPath should remain the default since it wasn't in the file.
 	home, _ := os.UserHomeDir()
@@ -81,7 +81,8 @@ func TestLoadFile_Full(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := `vault_path = "~/docs"
-theme = "nord"
+colorscheme = "nord"
+colorscheme_repo = "shaunsingh/nord.nvim"
 nvim_mode = "user"
 leader_key = ","
 leader_timeout = 300
@@ -105,8 +106,11 @@ auto_format_on_save = false
 	if cfg.VaultPath != wantPath {
 		t.Errorf("VaultPath = %q, want %q", cfg.VaultPath, wantPath)
 	}
-	if cfg.Theme != "nord" {
-		t.Errorf("Theme = %q, want %q", cfg.Theme, "nord")
+	if cfg.Colorscheme != "nord" {
+		t.Errorf("Colorscheme = %q, want %q", cfg.Colorscheme, "nord")
+	}
+	if cfg.ColorschemeRepo != "shaunsingh/nord.nvim" {
+		t.Errorf("ColorschemeRepo = %q, want %q", cfg.ColorschemeRepo, "shaunsingh/nord.nvim")
 	}
 	if cfg.NvimMode != "user" {
 		t.Errorf("NvimMode = %q, want %q", cfg.NvimMode, "user")
