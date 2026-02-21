@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CGO_ENABLED: "0"
+
 jobs:
   test-lint-build:
     runs-on: ubuntu-latest
@@ -17,30 +20,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Fast, reliable Nix install + caching.
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v12
-
-      # Use GitHub Actions cache only for now (no FlakeHub auth).
-      - name: Enable Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@v7
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          use-gha-cache: true
-          use-flakehub: false
+          go-version-file: go.mod
 
-      # Cache Go module + build caches between runs.
-      - name: Cache Go
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-            ~/.cache/golangci-lint
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
 
-      # Use the minimal CI devShell to reduce downloads, and run everything
-      # inside a single nix develop to avoid repeated shell realization.
-      - name: Test / Lint / Build
-        run: nix develop .#ci -c bash -c "make test lint build"
+      - name: Test
+        run: make test
+
+      - name: Build
+        run: make build

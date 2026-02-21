@@ -1,4 +1,4 @@
-version: 2
+version: "2"
 
 run:
   timeout: 5m
@@ -9,17 +9,11 @@ linters:
     - staticcheck
     - unused
     - govet
-
-issues:
-  exclude-use-default: false
-  exclude-rules:
-    # Tests: keep signal high; production code should be strict.
-    - path: ".*_test\\.go$"
-      linters:
-        - errcheck
-
-linters-settings:
-  errcheck:
-    # Do not allow implicit ignoring; require explicit handling or `_ = ...`.
-    check-type-assertions: true
-    check-blank: true
+  settings:
+    errcheck:
+      check-type-assertions: true
+  exclusions:
+    rules:
+      - path: ".*_test\\.go$"
+        linters:
+          - errcheck

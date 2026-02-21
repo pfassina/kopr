@@ -125,7 +125,10 @@ func RunSetup() (SetupResult, error) {
 		return SetupResult{}, err
 	}
 
-	fm := final.(setupModel)
+	fm, ok := final.(setupModel)
+	if !ok {
+		return SetupResult{}, fmt.Errorf("unexpected model type from setup wizard")
+	}
 	if fm.quit {
 		return SetupResult{Cancelled: true}, nil
 	}
