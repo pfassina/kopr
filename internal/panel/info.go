@@ -5,6 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/pfassina/kopr/internal/theme"
 )
 
 // InfoItem represents an item in the info panel.
@@ -22,7 +24,11 @@ type Info struct {
 	cursor  int
 	offset  int
 	focused bool
+	theme   *theme.Theme
 }
+
+// SetTheme sets the color theme for the info panel.
+func (i *Info) SetTheme(th *theme.Theme) { i.theme = th }
 
 func NewInfo() Info {
 	return Info{
@@ -107,17 +113,19 @@ func (i Info) View() string {
 		return ""
 	}
 
+	th := i.theme
+
 	var titleStyle lipgloss.Style
 	if i.focused {
 		titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("212")).
+			Foreground(th.Accent).
 			Underline(true).
 			Padding(0, 1)
 	} else {
 		titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("240")).
+			Foreground(th.Dim).
 			Padding(0, 1)
 	}
 
@@ -131,7 +139,7 @@ func (i Info) View() string {
 	}
 
 	if len(i.items) == 0 {
-		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 1)
+		dim := lipgloss.NewStyle().Foreground(th.Dim).Padding(0, 1)
 		b.WriteString(dim.Render("No items"))
 		b.WriteByte('\n')
 	} else {
@@ -149,7 +157,7 @@ func (i Info) View() string {
 
 			if j == i.cursor && i.focused {
 				style := lipgloss.NewStyle().
-					Foreground(lipgloss.Color("212")).
+					Foreground(th.Accent).
 					Bold(true)
 				b.WriteString(style.Render(padded))
 			} else {

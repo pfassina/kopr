@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/pfassina/kopr/internal/theme"
 )
 
 // WhichKeyEntry represents a single key binding for display.
@@ -19,7 +21,11 @@ type WhichKey struct {
 	entries []WhichKeyEntry
 	prefix  string
 	width   int
+	theme   *theme.Theme
 }
+
+// SetTheme sets the color theme for the which-key popup.
+func (w *WhichKey) SetTheme(th *theme.Theme) { w.theme = th }
 
 func NewWhichKey() WhichKey {
 	return WhichKey{}
@@ -47,6 +53,8 @@ func (w WhichKey) View() string {
 		return ""
 	}
 
+	th := w.theme
+
 	width := w.width
 	if width == 0 {
 		width = 60
@@ -54,20 +62,20 @@ func (w WhichKey) View() string {
 
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("212")).
+		BorderForeground(th.Accent).
 		Padding(0, 1).
 		Width(width - 4)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("212"))
+		Foreground(th.Accent)
 
 	keyStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("114")).
+		Foreground(th.InsertMode).
 		Bold(true)
 
 	labelStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
+		Foreground(th.Text)
 
 	var lines []string
 	if w.prefix != "" {

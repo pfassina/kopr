@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/pfassina/kopr/internal/theme"
 	"github.com/pfassina/kopr/internal/vault"
 )
 
@@ -78,7 +79,7 @@ type Tree struct {
 	height     int
 	focused    bool
 	showHelp   bool
-	accent     lipgloss.Color
+	theme      *theme.Theme
 }
 
 func NewTree(v *vault.Vault) Tree {
@@ -86,9 +87,11 @@ func NewTree(v *vault.Vault) Tree {
 		vault:     v,
 		collapsed: make(map[string]bool),
 		selected:  make(map[string]bool),
-		accent:    lipgloss.Color("212"),
 	}
 }
+
+// SetTheme sets the color theme for the tree panel.
+func (t *Tree) SetTheme(th *theme.Theme) { t.theme = th }
 
 func (t *Tree) Refresh() {
 	entries, _ := t.vault.ListEntries()
@@ -203,10 +206,6 @@ func (t *Tree) ClipboardInfo() (ClipboardOp, int) {
 	return t.clipboard.Op, len(t.clipboard.Paths)
 }
 
-// SetAccent sets the accent color used for highlights.
-func (t *Tree) SetAccent(c lipgloss.Color) {
-	t.accent = c
-}
 
 func (t Tree) Init() tea.Cmd {
 	return nil
@@ -350,19 +349,19 @@ func (t Tree) View() string {
 		return ""
 	}
 
-	accentColor := t.accent
+	th := t.theme
 
 	var titleStyle lipgloss.Style
 	if t.focused {
 		titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(accentColor).
+			Foreground(th.Accent).
 			Underline(true).
 			Padding(0, 1)
 	} else {
 		titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("240")).
+			Foreground(th.Dim).
 			Padding(0, 1)
 	}
 
@@ -371,7 +370,7 @@ func (t Tree) View() string {
 	// Title row with optional ? hint
 	title := titleStyle.Render("Files")
 	if t.focused && !t.showHelp {
-		hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		hintStyle := lipgloss.NewStyle().Foreground(th.Dim)
 		hint := hintStyle.Render("?")
 		titleWidth := lipgloss.Width(title)
 		hintWidth := lipgloss.Width(hint)
@@ -403,9 +402,9 @@ func (t Tree) View() string {
 		}
 	}
 
-	markerSelected := lipgloss.NewStyle().Foreground(accentColor).Render("\u258e")
-	markerYanked := lipgloss.NewStyle().Foreground(accentColor).Render("\u258e")
-	markerCut := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("\u258e")
+	markerSelected := lipgloss.NewStyle().Foreground(th.Accent).Render("\u258e")
+	markerYanked := lipgloss.NewStyle().Foreground(th.Accent).Render("\u258e")
+	markerCut := lipgloss.NewStyle().Foreground(th.Dim).Render("\u258e")
 
 	for i := t.offset; i < len(t.entries) && i-t.offset < viewHeight; i++ {
 		entry := t.entries[i]
@@ -449,7 +448,7 @@ func (t Tree) View() string {
 
 		if i == t.cursor && t.focused {
 			style := lipgloss.NewStyle().
-				Foreground(accentColor).
+				Foreground(th.Accent).
 				Bold(true)
 			b.WriteString(marker + style.Render(line))
 		} else {
@@ -476,11 +475,12 @@ func (t Tree) isInClipboard(path string) bool {
 }
 
 func (t Tree) renderHelp() string {
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	key := lipgloss.NewStyle().Foreground(t.accent).Bold(true)
+	th := t.theme
+	dim := lipgloss.NewStyle().Foreground(th.Dim)
+	key := lipgloss.NewStyle().Foreground(th.Accent).Bold(true)
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
+		BorderForeground(th.Border).
 		Padding(0, 1).
 		Width(t.width - 6)
 

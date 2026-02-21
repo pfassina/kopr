@@ -12,7 +12,8 @@ import (
 // "not set" from zero values when merging TOML.
 type fileConfig struct {
 	VaultPath         *string `toml:"vault_path"`
-	Theme             *string `toml:"theme"`
+	Colorscheme       *string `toml:"colorscheme"`
+	ColorschemeRepo   *string `toml:"colorscheme_repo"`
 	NvimMode          *string `toml:"nvim_mode"`
 	LeaderKey         *string `toml:"leader_key"`
 	LeaderTimeout     *int    `toml:"leader_timeout"`
@@ -53,8 +54,11 @@ func LoadFile(cfg *Config) (bool, error) {
 	if fc.VaultPath != nil {
 		cfg.VaultPath = ExpandHome(*fc.VaultPath)
 	}
-	if fc.Theme != nil {
-		cfg.Theme = *fc.Theme
+	if fc.Colorscheme != nil {
+		cfg.Colorscheme = *fc.Colorscheme
+	}
+	if fc.ColorschemeRepo != nil {
+		cfg.ColorschemeRepo = *fc.ColorschemeRepo
 	}
 	if fc.NvimMode != nil {
 		cfg.NvimMode = *fc.NvimMode

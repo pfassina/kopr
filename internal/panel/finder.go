@@ -7,6 +7,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/pfassina/kopr/internal/theme"
 )
 
 // FinderItem represents an item in the finder results.
@@ -45,7 +47,11 @@ type Finder struct {
 	height   int
 	visible  bool
 	searchFn SearchFunc
+	theme    *theme.Theme
 }
+
+// SetTheme sets the color theme for the finder panel.
+func (f *Finder) SetTheme(th *theme.Theme) { f.theme = th }
 
 func NewFinder() Finder {
 	ti := textinput.New()
@@ -143,6 +149,8 @@ func (f Finder) View() string {
 		return ""
 	}
 
+	th := f.theme
+
 	width := f.width
 	if width == 0 {
 		width = 60
@@ -151,13 +159,13 @@ func (f Finder) View() string {
 
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("212")).
+		BorderForeground(th.Accent).
 		Padding(0, 1).
 		Width(innerWidth)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("212"))
+		Foreground(th.Accent)
 
 	var lines []string
 	lines = append(lines, titleStyle.Render("Find Note"))
@@ -173,7 +181,7 @@ func (f Finder) View() string {
 	}
 
 	if len(f.items) == 0 {
-		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		dim := lipgloss.NewStyle().Foreground(th.Dim)
 		lines = append(lines, dim.Render("No results"))
 
 		query := strings.TrimSpace(f.input.Value())
@@ -186,11 +194,11 @@ func (f Finder) View() string {
 		for i := 0; i < maxResults; i++ {
 			item := f.items[i]
 			prefix := "  "
-			style := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+			style := lipgloss.NewStyle().Foreground(th.Text)
 
 			if i == f.cursor {
 				prefix = "> "
-				style = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+				style = lipgloss.NewStyle().Foreground(th.Accent).Bold(true)
 			}
 
 			title := item.Title
@@ -200,7 +208,7 @@ func (f Finder) View() string {
 
 			line := fmt.Sprintf("%s%s", prefix, title)
 			if item.Extra != "" {
-				dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+				dim := lipgloss.NewStyle().Foreground(th.Dim)
 				line += " " + dim.Render(item.Extra)
 			}
 
@@ -213,7 +221,7 @@ func (f Finder) View() string {
 		}
 
 		if len(f.items) > maxResults {
-			dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+			dim := lipgloss.NewStyle().Foreground(th.Dim)
 			lines = append(lines, dim.Render(fmt.Sprintf("  ... and %d more", len(f.items)-maxResults)))
 		}
 	}

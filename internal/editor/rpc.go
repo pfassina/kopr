@@ -351,6 +351,62 @@ func (r *RPC) Quit() {
 	_ = r.client.Command("qa!")
 }
 
+// ApplyColorscheme sets the active colorscheme in Neovim.
+func (r *RPC) ApplyColorscheme(name string) error {
+	return r.client.ExecLua("vim.cmd('colorscheme ' .. ...)", nil, name)
+}
+
+// ExtractColors queries Neovim highlight groups and returns a map of
+// group name → [fg, bg] hex color strings. Empty string means the group
+// did not define that attribute.
+func (r *RPC) ExtractColors() (map[string][2]string, error) {
+	groups := []string{
+		"Normal", "Function", "Keyword", "Comment",
+		"NonText", "LineNr", "WinSeparator",
+		"StatusLine", "DiagnosticError",
+		"String", "Visual", "WarningMsg",
+	}
+
+	result := make(map[string][2]string, len(groups))
+
+	for _, g := range groups {
+		var raw map[string]interface{}
+		err := r.client.ExecLua(
+			"return vim.api.nvim_get_hl(0, {name=..., link=false})",
+			&raw, g,
+		)
+		if err != nil {
+			continue // group may not exist in this colorscheme
+		}
+		var pair [2]string
+		if fg, ok := raw["fg"]; ok {
+			pair[0] = intToHex(fg)
+		}
+		if bg, ok := raw["bg"]; ok {
+			pair[1] = intToHex(bg)
+		}
+		if pair[0] != "" || pair[1] != "" {
+			result[g] = pair
+		}
+	}
+
+	return result, nil
+}
+
+// intToHex converts an integer-typed color value to a #rrggbb hex string.
+func intToHex(v interface{}) string {
+	switch n := v.(type) {
+	case int64:
+		return fmt.Sprintf("#%06x", n)
+	case uint64:
+		return fmt.Sprintf("#%06x", n)
+	case float64:
+		return fmt.Sprintf("#%06x", int64(n))
+	default:
+		return ""
+	}
+}
+
 // Close closes the RPC connection.
 func (r *RPC) Close() error {
 	if r.client != nil {

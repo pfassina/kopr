@@ -38,6 +38,8 @@ vim.opt.writebackup = false
 vim.opt.undofile = true
 
 -- Colors
+-- Kopr applies the configured colorscheme via RPC on connect.
+-- This is a fallback for the brief moment before RPC is ready.
 vim.opt.termguicolors = true
 pcall(vim.cmd, "colorscheme no-clown-fiesta")
 

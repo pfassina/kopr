@@ -28,7 +28,7 @@ func main() {
 	vault := flag.String("vault", cfg.VaultPath, "path to vault directory")
 	serve := flag.Bool("serve", cfg.Serve, "run in SSH server mode")
 	listen := flag.String("listen", cfg.Listen, "listen address for --serve (e.g. :2222)")
-	theme := flag.String("theme", cfg.Theme, "UI theme (catppuccin, nord, gruvbox, tokyo-night)")
+	colorscheme := flag.String("colorscheme", cfg.Colorscheme, "vim colorscheme name")
 	nvimMode := flag.String("nvim-mode", cfg.NvimMode, "neovim config mode: managed|user")
 	leaderKey := flag.String("leader-key", cfg.LeaderKey, "leader key (default: space)")
 	leaderTimeout := flag.Int("leader-timeout", cfg.LeaderTimeout, "leader timeout in ms")
@@ -43,7 +43,7 @@ func main() {
 	}
 	cfg.Serve = *serve
 	cfg.Listen = *listen
-	cfg.Theme = *theme
+	cfg.Colorscheme = *colorscheme
 	cfg.NvimMode = *nvimMode
 	cfg.LeaderKey = *leaderKey
 	cfg.LeaderTimeout = *leaderTimeout
@@ -89,6 +89,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "neovim profile:", err)
 		os.Exit(1)
 	}
+	if err := editor.EnsureThemePlugin(cfg.ColorschemeRepo); err != nil {
+		fmt.Fprintln(os.Stderr, "colorscheme plugin:", err)
+		os.Exit(1)
+	}
 
 	if cfg.Serve {
 		runServe(cfg)
@@ -98,6 +102,10 @@ func main() {
 }
 
 func runLocal(cfg config.Config) {
+	// Ensure lipgloss/termenv uses truecolor so extracted colorscheme colors
+	// render accurately instead of being approximated to the 256-color palette.
+	_ = os.Setenv("COLORTERM", "truecolor") // hint for termenv color profile detection
+
 	a := app.New(cfg)
 	p := tea.NewProgram(&a, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	a.SetProgram(p)

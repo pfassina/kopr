@@ -6,6 +6,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/pfassina/kopr/internal/theme"
 )
 
 // PromptResultMsg is sent when the prompt is confirmed.
@@ -26,7 +28,11 @@ type Prompt struct {
 	visible       bool
 	confirm       bool // true = yes/no confirm mode
 	confirmCursor int  // 0=Yes, 1=No
+	theme         *theme.Theme
 }
+
+// SetTheme sets the color theme for the prompt panel.
+func (p *Prompt) SetTheme(th *theme.Theme) { p.theme = th }
 
 func NewPrompt() Prompt {
 	ti := textinput.New()
@@ -135,6 +141,8 @@ func (p Prompt) View() string {
 		return p.viewConfirm()
 	}
 
+	th := p.theme
+
 	width := p.width
 	if width == 0 {
 		width = 60
@@ -143,22 +151,22 @@ func (p Prompt) View() string {
 
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("212")).
+		BorderForeground(th.Accent).
 		Padding(0, 1).
 		Width(innerWidth)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("212"))
+		Foreground(th.Accent)
 
 	dimStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
+		Foreground(th.Dim)
 
 	var lines []string
 	lines = append(lines, titleStyle.Render(p.title))
 	lines = append(lines, p.input.View())
 	if p.errorMsg != "" {
-		errStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
+		errStyle := lipgloss.NewStyle().Bold(true).Foreground(th.Error)
 		lines = append(lines, "")
 		lines = append(lines, errStyle.Render(p.errorMsg))
 	}
@@ -170,6 +178,8 @@ func (p Prompt) View() string {
 }
 
 func (p Prompt) viewConfirm() string {
+	th := p.theme
+
 	width := p.width
 	if width == 0 {
 		width = 60
@@ -178,19 +188,19 @@ func (p Prompt) viewConfirm() string {
 
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("212")).
+		BorderForeground(th.Accent).
 		Padding(0, 1).
 		Width(innerWidth)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("212"))
+		Foreground(th.Accent)
 
 	accentStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("212"))
+		Foreground(th.Accent)
 
 	dimStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
+		Foreground(th.Dim)
 
 	options := [2]string{"Yes", "No"}
 	var lines []string

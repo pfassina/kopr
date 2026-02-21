@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/pfassina/kopr/internal/theme"
 )
 
 // Status is the status bar at the bottom.
@@ -15,7 +17,11 @@ type Status struct {
 	vaultDir  string
 	clipboard string
 	errMsg    string
+	theme     *theme.Theme
 }
+
+// SetTheme sets the color theme for the status bar.
+func (s *Status) SetTheme(th *theme.Theme) { s.theme = th }
 
 func NewStatus(vaultDir string) Status {
 	return Status{
@@ -53,20 +59,22 @@ func (s Status) View() string {
 		return ""
 	}
 
+	th := s.theme
+
 	bgStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("236"))
+		Background(th.StatusBg)
 
 	modeColors := map[string]lipgloss.Color{
-		"NORMAL":  lipgloss.Color("212"),
-		"INSERT":  lipgloss.Color("114"),
-		"VISUAL":  lipgloss.Color("216"),
-		"COMMAND": lipgloss.Color("75"),
-		"REPLACE": lipgloss.Color("203"),
+		"NORMAL":  th.NormalMode,
+		"INSERT":  th.InsertMode,
+		"VISUAL":  th.VisualMode,
+		"COMMAND": th.CmdMode,
+		"REPLACE": th.Error,
 	}
 
 	color, ok := modeColors[s.mode]
 	if !ok {
-		color = lipgloss.Color("252")
+		color = th.Text
 	}
 
 	modeStyle := lipgloss.NewStyle().
@@ -76,8 +84,8 @@ func (s Status) View() string {
 		Padding(0, 1)
 
 	fileStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("252")).
+		Background(th.StatusBg).
+		Foreground(th.StatusFg).
 		Padding(0, 1)
 
 	mode := modeStyle.Render(s.mode)
@@ -85,8 +93,8 @@ func (s Status) View() string {
 	var fileSection string
 	if s.errMsg != "" {
 		errStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("236")).
-			Foreground(lipgloss.Color("203")).
+			Background(th.StatusBg).
+			Foreground(th.Error).
 			Padding(0, 1)
 		fileSection = errStyle.Render(s.errMsg)
 	} else {
@@ -102,8 +110,8 @@ func (s Status) View() string {
 	right := ""
 	if s.clipboard != "" {
 		clipStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("236")).
-			Foreground(lipgloss.Color("252")).
+			Background(th.StatusBg).
+			Foreground(th.StatusFg).
 			Padding(0, 1)
 		right = clipStyle.Render(s.clipboard)
 	}

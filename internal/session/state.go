@@ -8,7 +8,6 @@ type State struct {
 	ShowInfo   bool     `json:"show_info"`
 	TreeWidth  int      `json:"tree_width,omitempty"`
 	InfoWidth  int      `json:"info_width,omitempty"`
-	Theme      string   `json:"theme,omitempty"`
 }
 
 // Default returns the default session state.
@@ -18,6 +17,5 @@ func Default() State {
 		ShowInfo:  true,
 		TreeWidth: 30,
 		InfoWidth: 30,
-		Theme:     "catppuccin",
 	}
 }
