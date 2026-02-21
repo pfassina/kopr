@@ -55,6 +55,11 @@ type FollowLinkMsg struct{}
 // GoBackMsg is sent when the user presses gb to go back to the previous note.
 type GoBackMsg struct{}
 
+// YankMsg is sent when text is yanked in Neovim (via TextYankPost autocmd).
+type YankMsg struct {
+	Text string
+}
+
 // ColorsReadyMsg is sent after the colorscheme is applied and colors are extracted.
 // If Err is set, the colorscheme failed to load and Colors will be nil.
 type ColorsReadyMsg struct {
@@ -219,6 +224,10 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 				return e, tea.Quit
 			}
 			if err := e.rpc.SetupLinkNavigation(e.program); err != nil {
+				e.err = err
+				return e, tea.Quit
+			}
+			if err := e.rpc.SetupYankClipboard(e.program); err != nil {
 				e.err = err
 				return e, tea.Quit
 			}

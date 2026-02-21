@@ -251,6 +251,38 @@ vim.api.nvim_create_autocmd('BufWritePost', {
 	return r.client.ExecLua(lua, nil)
 }
 
+// SetupYankClipboard installs a TextYankPost autocmd that sends yanked text
+// back to the Go side via RPC, so it can be forwarded to the system clipboard.
+func (r *RPC) SetupYankClipboard(program *tea.Program) error {
+	if err := r.client.RegisterHandler("kopr:yank", func(args ...interface{}) {
+		if program == nil || len(args) < 1 {
+			return
+		}
+		text, ok := args[0].(string)
+		if !ok {
+			return
+		}
+		program.Send(YankMsg{Text: text})
+	}); err != nil {
+		return err
+	}
+
+	if err := r.client.Subscribe("kopr:yank"); err != nil {
+		return err
+	}
+
+	cid := r.client.ChannelID()
+	lua := fmt.Sprintf(`
+vim.api.nvim_create_autocmd('TextYankPost', {
+  callback = function()
+    local text = table.concat(vim.v.event.regcontents, '\n')
+    vim.rpcnotify(%d, 'kopr:yank', text)
+  end,
+})
+`, cid)
+	return r.client.ExecLua(lua, nil)
+}
+
 // CursorPosition returns the current cursor position as (line, col).
 // Line is 1-based, col is 0-based (matching Neovim convention).
 func (r *RPC) CursorPosition() (int, int, error) {
