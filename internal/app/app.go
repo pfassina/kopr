@@ -2,10 +2,12 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	osc52 "github.com/aymanbagabas/go-osc52/v2"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -71,6 +73,10 @@ type App struct {
 
 	// prevFile stores the previously opened note for gb (go back) navigation.
 	prevFile string
+
+	// output is the terminal writer for OSC 52 clipboard sequences.
+	// os.Stdout for local mode, the SSH session for SSH mode.
+	output io.Writer
 }
 
 // navigateTo opens a note and updates the navigation history.
@@ -144,6 +150,23 @@ func (a *App) SetProgram(p *tea.Program) {
 	a.editor.SetProgram(p)
 }
 
+// SetOutput sets the terminal output writer used for OSC 52 clipboard sequences.
+func (a *App) SetOutput(w io.Writer) {
+	a.output = w
+}
+
+// writeClipboard returns a Cmd that writes text to the system clipboard via OSC 52.
+func (a *App) writeClipboard(text string) tea.Cmd {
+	w := a.output
+	if w == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		osc52.New(text).WriteTo(w) //nolint:errcheck // best-effort clipboard write
+		return nil
+	}
+}
+
 func (a *App) Init() tea.Cmd {
 	cmds := []tea.Cmd{a.editor.Init()}
 	if a.indexer != nil {
@@ -154,6 +177,9 @@ func (a *App) Init() tea.Cmd {
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case editor.YankMsg:
+		return a, a.writeClipboard(msg.Text)
+
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			a.Close()
