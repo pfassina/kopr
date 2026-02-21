@@ -76,5 +76,24 @@ pcall(function()
             icons = { '', '', '', '', '', '' },
             position = 'inline',
         },
+        link = {
+            wiki = {
+                scope_highlight = 'RenderMarkdownWikiLink',
+            },
+        },
     })
+    -- Pad callout rendered text so the overlay fully covers the raw [!TAG] text.
+    -- Nerd font icons are 1 cell wide, making the overlay 1 char too short and
+    -- leaving the closing ']' visible. Adding trailing spaces fixes this.
+    local state = require("render-markdown.state")
+    if state and state.config and state.config.callout then
+        for _, def in pairs(state.config.callout) do
+            if def.raw and def.rendered then
+                local pad = #def.raw - vim.fn.strdisplaywidth(def.rendered)
+                if pad > 0 then
+                    def.rendered = def.rendered .. string.rep(" ", pad)
+                end
+            end
+        end
+    end
 end)
