@@ -13,6 +13,7 @@ import (
 func NewHandler(cfg config.Config) bts.Handler {
 	return func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		a := app.New(cfg)
+		a.SetOutput(sess)
 
 		opts := []tea.ProgramOption{
 			tea.WithAltScreen(),
