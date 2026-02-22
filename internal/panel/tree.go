@@ -451,7 +451,7 @@ func (t Tree) View() string {
 
 		if i == t.cursor && t.focused {
 			style := lipgloss.NewStyle().
-				Foreground(th.Accent).
+				Foreground(th.Accent2).
 				Bold(true)
 			b.WriteString(marker + style.Render(line))
 		} else {
