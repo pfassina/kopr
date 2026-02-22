@@ -129,25 +129,46 @@ func (a *App) createNoteFromFinder(name string) {
 	a.tree.Refresh()
 }
 
-// updateBacklinks refreshes the backlinks panel for the given note path.
-func (a *App) updateBacklinks(relPath string) {
+// updateInfoPanel refreshes all info panel sections for the given note path.
+func (a *App) updateInfoPanel(relPath string) {
 	if a.db == nil {
 		return
 	}
 
+	// Backlinks
 	backlinks, err := a.db.GetBacklinks(relPath)
-	if err != nil || len(backlinks) == 0 {
-		a.info.SetBacklinks(nil)
-		return
+	if err != nil {
+		backlinks = nil
 	}
-
-	items := make([]panel.InfoItem, len(backlinks))
+	blItems := make([]panel.InfoItem, len(backlinks))
 	for i, bl := range backlinks {
 		title := bl.SourceTitle
 		if title == "" {
 			title = bl.SourcePath
 		}
-		items[i] = panel.InfoItem{Title: title, Path: bl.SourcePath}
+		blItems[i] = panel.InfoItem{Title: title, Path: bl.SourcePath}
 	}
-	a.info.SetBacklinks(items)
+	a.info.SetBacklinks(blItems)
+
+	// Outgoing links
+	outgoing, err := a.db.GetOutgoingLinks(relPath)
+	if err != nil {
+		outgoing = nil
+	}
+	olItems := make([]panel.InfoItem, len(outgoing))
+	for i, ol := range outgoing {
+		olItems[i] = panel.InfoItem{Title: ol.TargetTitle, Path: ol.TargetPath}
+	}
+	a.info.SetOutgoingLinks(olItems)
+
+	// Outline (headings)
+	headings, err := a.db.GetHeadingsForNote(relPath)
+	if err != nil {
+		headings = nil
+	}
+	hdItems := make([]panel.InfoItem, len(headings))
+	for i, h := range headings {
+		hdItems[i] = panel.InfoItem{Title: h.Text, Line: h.Line, Level: h.Level}
+	}
+	a.info.SetOutline(hdItems)
 }

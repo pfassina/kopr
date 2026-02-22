@@ -24,6 +24,19 @@ func FromExtracted(colors map[string][2]string, base Theme) Theme {
 		t.Accent = lipgloss.Color(c)
 	}
 
+	// Accent2: derive from markdown heading highlights (treesitter → legacy fallback).
+	// H2 is preferred over H1 since H1 often matches Function/Keyword (= Accent).
+	switch {
+	case isSet(fg(colors, "@markup.heading.2.markdown")):
+		t.Accent2 = lipgloss.Color(fg(colors, "@markup.heading.2.markdown"))
+	case isSet(fg(colors, "markdownH2")):
+		t.Accent2 = lipgloss.Color(fg(colors, "markdownH2"))
+	case isSet(fg(colors, "@markup.heading.1.markdown")):
+		t.Accent2 = lipgloss.Color(fg(colors, "@markup.heading.1.markdown"))
+	case isSet(fg(colors, "markdownH1")):
+		t.Accent2 = lipgloss.Color(fg(colors, "markdownH1"))
+	}
+
 	if c := fg(colors, "Comment"); isSet(c) {
 		t.Subtle = lipgloss.Color(c)
 	}

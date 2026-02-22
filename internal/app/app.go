@@ -89,7 +89,7 @@ func (a *App) navigateTo(relPath string) {
 	a.status.ClearError()
 	a.status.SetFile(relPath)
 	a.currentFile = relPath
-	a.updateBacklinks(relPath)
+	a.updateInfoPanel(relPath)
 }
 
 func New(cfg config.Config) App {
@@ -301,6 +301,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.updateWhichKey()
 		}
 
+	case panel.InfoGotoLineMsg:
+		rpc := a.editor.GetRPC()
+		if rpc != nil {
+			rpc.SetCursorPosition(msg.Line, 0) //nolint:errcheck // best-effort cursor jump
+		}
+		a.setFocus(focusEditor)
+		return a, nil
+
 	case panel.FileSelectedMsg:
 		a.navigateTo(msg.Path)
 		a.setFocus(focusEditor)
@@ -388,7 +396,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// If the user saved the currently open note, refresh backlinks in-place.
 		if msg.relPath != "" && msg.relPath == a.currentFile {
-			a.updateBacklinks(a.currentFile)
+			a.updateInfoPanel(a.currentFile)
 		}
 		return a, nil
 
@@ -865,7 +873,7 @@ func (a *App) handleSaveAsPrompt(value string, closeAfter bool) (cmd tea.Cmd, ok
 	a.status.SetFile(relPath)
 	a.currentFile = relPath
 	a.tree.Refresh()
-	a.updateBacklinks(relPath)
+	a.updateInfoPanel(relPath)
 
 	if closeAfter {
 		a.showSplash()
