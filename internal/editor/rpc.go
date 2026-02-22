@@ -397,6 +397,8 @@ func (r *RPC) ExtractColors() (map[string][2]string, error) {
 		"NonText", "LineNr", "WinSeparator",
 		"StatusLine", "DiagnosticError",
 		"String", "Visual", "WarningMsg",
+		"@markup.heading.1.markdown", "@markup.heading.2.markdown",
+		"markdownH1", "markdownH2",
 	}
 
 	result := make(map[string][2]string, len(groups))

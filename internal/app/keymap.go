@@ -89,7 +89,7 @@ func newBindings() map[string]*Binding {
 					a.ToggleTree()
 					return nil
 				}},
-				"b": {Key: "b", Label: "Toggle backlinks", Action: func(a *App) tea.Cmd {
+				"b": {Key: "b", Label: "Toggle info", Action: func(a *App) tea.Cmd {
 					a.ToggleInfo()
 					return nil
 				}},

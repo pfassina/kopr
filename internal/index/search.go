@@ -30,6 +30,13 @@ type HeadingResult struct {
 	Line     int
 }
 
+// OutgoingLinkResult represents an outgoing link from a note.
+type OutgoingLinkResult struct {
+	TargetPath  string
+	TargetTitle string
+	Resolved    bool
+}
+
 // Search performs a full-text search across notes.
 func (db *DB) Search(query string, limit int) ([]SearchResult, error) {
 	if limit <= 0 {
@@ -189,6 +196,75 @@ func (db *DB) GetNoteIDByPath(path string) (int64, error) {
 		return 0, nil
 	}
 	return id, err
+}
+
+// GetOutgoingLinks returns all links from the given note.
+// Resolved links include the target note's title; unresolved links fall back to target_path.
+func (db *DB) GetOutgoingLinks(relPath string) ([]OutgoingLinkResult, error) {
+	noteID, err := db.GetNoteIDByPath(relPath)
+	if err != nil || noteID == 0 {
+		return nil, err
+	}
+
+	rows, err := db.conn.Query(`
+		SELECT l.target_path, COALESCE(n.title, ''), l.target_id IS NOT NULL
+		FROM links l
+		LEFT JOIN notes n ON n.id = l.target_id
+		WHERE l.source_id = ?
+		ORDER BY l.line, l.col
+	`, noteID)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []OutgoingLinkResult
+	for rows.Next() {
+		var r OutgoingLinkResult
+		if err := rows.Scan(&r.TargetPath, &r.TargetTitle, &r.Resolved); err != nil {
+			return nil, errors.Join(err, rows.Close())
+		}
+		if r.TargetTitle == "" {
+			r.TargetTitle = r.TargetPath
+		}
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Join(err, rows.Close())
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// GetHeadingsForNote returns all headings for a specific note, ordered by line.
+func (db *DB) GetHeadingsForNote(relPath string) ([]HeadingResult, error) {
+	rows, err := db.conn.Query(`
+		SELECT h.note_id, n.path, h.level, h.text, h.line
+		FROM headings h
+		JOIN notes n ON n.id = h.note_id
+		WHERE n.path = ?
+		ORDER BY h.line
+	`, relPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []HeadingResult
+	for rows.Next() {
+		var r HeadingResult
+		if err := rows.Scan(&r.NoteID, &r.NotePath, &r.Level, &r.Text, &r.Line); err != nil {
+			return nil, errors.Join(err, rows.Close())
+		}
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Join(err, rows.Close())
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // SearchHeadings searches headings across all notes.

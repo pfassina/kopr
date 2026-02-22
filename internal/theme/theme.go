@@ -8,6 +8,7 @@ import "github.com/charmbracelet/lipgloss"
 type Theme struct {
 	Bg         lipgloss.Color
 	Accent     lipgloss.Color
+	Accent2    lipgloss.Color
 	Subtle     lipgloss.Color
 	Text       lipgloss.Color
 	Dim        lipgloss.Color
@@ -26,6 +27,7 @@ func DefaultTheme() Theme {
 	return Theme{
 		Bg:         lipgloss.Color("#1e1e2e"),
 		Accent:     lipgloss.Color("#cba6f7"),
+		Accent2:    lipgloss.Color("#89b4fa"),
 		Subtle:     lipgloss.Color("#6c7086"),
 		Text:       lipgloss.Color("#cdd6f4"),
 		Dim:        lipgloss.Color("#585b70"),
