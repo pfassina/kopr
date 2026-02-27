@@ -87,6 +87,7 @@ nvim_mode = "user"
 leader_key = ","
 leader_timeout = 300
 auto_format_on_save = false
+render_math = false
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -123,6 +124,9 @@ auto_format_on_save = false
 	}
 	if cfg.AutoFormatOnSave != false {
 		t.Errorf("AutoFormatOnSave = %v, want %v", cfg.AutoFormatOnSave, false)
+	}
+	if cfg.RenderMath != false {
+		t.Errorf("RenderMath = %v, want %v", cfg.RenderMath, false)
 	}
 }
 

@@ -69,6 +69,8 @@ vim.api.nvim_create_autocmd("FileType", {
 })
 
 -- Render-markdown plugin (live markdown preview via conceal)
+-- LaTeX math rendering uses the kopr-latex shell converter deployed by Kopr.
+-- Kopr reconfigures this via RPC based on the render_math config toggle.
 pcall(function()
     require("render-markdown").setup({
         render_modes = { "n", "v", "i", "c" },
@@ -81,6 +83,10 @@ pcall(function()
                 scope_highlight = 'RenderMarkdownWikiLink',
             },
         },
+        -- LaTeX math rendering is handled by Kopr's own renderer (via RPC)
+        -- rather than render-markdown.nvim's built-in latex handler, which
+        -- requires a treesitter latex parser we don't ship.
+        latex = { enabled = false },
     })
     -- Pad callout rendered text so the overlay fully covers the raw [!TAG] text.
     -- Nerd font icons are 1 cell wide, making the overlay 1 char too short and

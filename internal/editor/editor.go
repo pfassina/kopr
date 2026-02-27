@@ -76,6 +76,7 @@ type Editor struct {
 	socketPath  string
 	profileMode ProfileMode
 	colorscheme string
+	renderMath  bool
 	theme       *theme.Theme
 	nvim        *nvimPTY
 	rpc         *RPC
@@ -91,11 +92,12 @@ type Editor struct {
 // SetTheme sets the color theme for the editor splash screen.
 func (e *Editor) SetTheme(th *theme.Theme) { e.theme = th }
 
-func New(vaultPath string, profileMode ProfileMode, colorscheme string) Editor {
+func New(vaultPath string, profileMode ProfileMode, colorscheme string, renderMath bool) Editor {
 	return Editor{
 		vaultPath:   vaultPath,
 		profileMode: profileMode,
 		colorscheme: colorscheme,
+		renderMath:  renderMath,
 		mode:        ModeNormal,
 		focused:     true,
 		showSplash:  true,
@@ -234,6 +236,11 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 		}
 		// Ensure left gutter aligns buffer text with panel titles
 		if err := e.rpc.ExecCommand("set foldcolumn=1"); err != nil {
+			e.err = err
+			return e, tea.Quit
+		}
+		// Configure math rendering
+		if err := e.rpc.SetupMathRendering(e.renderMath); err != nil {
 			e.err = err
 			return e, tea.Quit
 		}
