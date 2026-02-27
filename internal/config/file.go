@@ -18,6 +18,7 @@ type fileConfig struct {
 	LeaderKey         *string `toml:"leader_key"`
 	LeaderTimeout     *int    `toml:"leader_timeout"`
 	AutoFormatOnSave  *bool   `toml:"auto_format_on_save"`
+	RenderMath        *bool   `toml:"render_math"`
 }
 
 // ConfigDir returns the kopr config directory, respecting XDG_CONFIG_HOME.
@@ -74,6 +75,9 @@ func LoadFile(cfg *Config) (bool, error) {
 	}
 	if fc.AutoFormatOnSave != nil {
 		cfg.AutoFormatOnSave = *fc.AutoFormatOnSave
+	}
+	if fc.RenderMath != nil {
+		cfg.RenderMath = *fc.RenderMath
 	}
 
 	return true, nil
