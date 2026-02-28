@@ -140,6 +140,7 @@ func New(cfg config.Config) App {
 		a.db = db
 		a.indexer = index.NewIndexer(db, cfg.VaultPath)
 		a.finder.SetSearchFunc(a.searchNotes)
+		a.finder.SetPreviewFunc(a.previewNote)
 	}
 
 	return a

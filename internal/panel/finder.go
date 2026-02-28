@@ -38,16 +38,22 @@ type FinderClosedMsg struct{}
 // SearchFunc is called to get results for a query.
 type SearchFunc func(query string) []FinderItem
 
-// Finder is a fuzzy finder overlay.
+// PreviewFunc returns the content of a note for preview.
+type PreviewFunc func(path string) string
+
+// Finder is a fuzzy finder overlay with a preview pane.
 type Finder struct {
-	input    textinput.Model
-	items    []FinderItem
-	cursor   int
-	width    int
-	height   int
-	visible  bool
-	searchFn SearchFunc
-	theme    *theme.Theme
+	input         textinput.Model
+	items         []FinderItem
+	cursor        int
+	width         int
+	height        int
+	visible       bool
+	searchFn      SearchFunc
+	previewFn     PreviewFunc
+	preview       string
+	previewScroll int
+	theme         *theme.Theme
 }
 
 // SetTheme sets the color theme for the finder panel.
@@ -69,14 +75,20 @@ func (f *Finder) SetSearchFunc(fn SearchFunc) {
 	f.searchFn = fn
 }
 
+func (f *Finder) SetPreviewFunc(fn PreviewFunc) {
+	f.previewFn = fn
+}
+
 func (f *Finder) Show() {
 	f.visible = true
 	f.input.SetValue("")
 	f.cursor = 0
+	f.previewScroll = 0
 	f.input.Focus()
 	if f.searchFn != nil {
 		f.items = f.searchFn("")
 	}
+	f.updatePreview()
 }
 
 func (f *Finder) Hide() {
@@ -86,6 +98,25 @@ func (f *Finder) Hide() {
 
 func (f Finder) Visible() bool {
 	return f.visible
+}
+
+func (f *Finder) updatePreview() {
+	if f.previewFn != nil && f.cursor < len(f.items) {
+		f.preview = f.previewFn(f.items[f.cursor].Path)
+	} else {
+		f.preview = ""
+	}
+	f.previewScroll = 0
+}
+
+// previewHeight returns the number of visible lines in the preview pane.
+func (f Finder) previewHeight() int {
+	return max(f.overlayHeight()-4, 3) // border + title + input + blank line
+}
+
+// overlayHeight returns the total height of the overlay box.
+func (f Finder) overlayHeight() int {
+	return max(f.height*3/4, 12)
 }
 
 func (f Finder) Update(msg tea.Msg) (Finder, tea.Cmd) {
@@ -120,13 +151,33 @@ func (f Finder) Update(msg tea.Msg) (Finder, tea.Cmd) {
 		case "up", "ctrl+p", "ctrl+k":
 			if f.cursor > 0 {
 				f.cursor--
+				f.updatePreview()
 			}
 			return f, nil
 
 		case "down", "ctrl+n", "ctrl+j":
 			if f.cursor < len(f.items)-1 {
 				f.cursor++
+				f.updatePreview()
 			}
+			return f, nil
+
+		case "ctrl+d":
+			f.scrollPreview(f.previewHeight() / 2)
+			return f, nil
+
+		case "ctrl+u":
+			f.scrollPreview(-f.previewHeight() / 2)
+			return f, nil
+		}
+
+	case tea.MouseMsg:
+		if msg.Button == tea.MouseButtonWheelUp {
+			f.scrollPreview(-3)
+			return f, nil
+		}
+		if msg.Button == tea.MouseButtonWheelDown {
+			f.scrollPreview(3)
 			return f, nil
 		}
 	}
@@ -139,9 +190,16 @@ func (f Finder) Update(msg tea.Msg) (Finder, tea.Cmd) {
 	if f.input.Value() != prevValue && f.searchFn != nil {
 		f.items = f.searchFn(f.input.Value())
 		f.cursor = 0
+		f.updatePreview()
 	}
 
 	return f, cmd
+}
+
+func (f *Finder) scrollPreview(delta int) {
+	lines := strings.Split(f.preview, "\n")
+	maxScroll := max(len(lines)-f.previewHeight(), 0)
+	f.previewScroll = max(min(f.previewScroll+delta, maxScroll), 0)
 }
 
 func (f Finder) View() string {
@@ -151,47 +209,43 @@ func (f Finder) View() string {
 
 	th := f.theme
 
-	width := f.width
-	if width == 0 {
-		width = 60
-	}
-	innerWidth := width - 6
+	overlayWidth := min(max(f.width*4/5, 60), f.width-4)
+	overlayH := f.overlayHeight()
 
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(th.Accent).
-		Padding(0, 1).
-		Width(innerWidth)
+	// Inner width accounts for outer border (2) + padding (2)
+	innerWidth := overlayWidth - 4
+	// Split: left column ~35%, right column ~65%
+	leftWidth := max(innerWidth*35/100, 20)
+	rightWidth := innerWidth - leftWidth - 1 // -1 for the separator
 
+	contentHeight := overlayH - 4 // border top/bottom + title + input + blank
+
+	// --- Left column: search input + results ---
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(th.Accent)
 
-	var lines []string
-	lines = append(lines, titleStyle.Render("Find Note"))
-	lines = append(lines, f.input.View())
-	lines = append(lines, "")
+	f.input.Width = leftWidth - 2
 
-	maxResults := f.height/2 - 4
-	if maxResults < 5 {
-		maxResults = 5
-	}
-	if maxResults > len(f.items) {
-		maxResults = len(f.items)
-	}
+	var leftLines []string
+	leftLines = append(leftLines, titleStyle.Render("Find Note"))
+	leftLines = append(leftLines, f.input.View())
+	leftLines = append(leftLines, "")
+
+	maxResults := min(max(contentHeight-3, 3), len(f.items)) // title + input + blank
 
 	if len(f.items) == 0 {
 		dim := lipgloss.NewStyle().Foreground(th.Dim)
-		lines = append(lines, dim.Render("No results"))
+		leftLines = append(leftLines, dim.Render("No results"))
 
 		query := strings.TrimSpace(f.input.Value())
 		if query != "" {
-			lines = append(lines, "")
-			lines = append(lines, dim.Render(fmt.Sprintf("Enter: create note %q", query)))
-			lines = append(lines, dim.Render("Esc: cancel"))
+			leftLines = append(leftLines, "")
+			leftLines = append(leftLines, dim.Render(fmt.Sprintf("Enter: create %q", query)))
+			leftLines = append(leftLines, dim.Render("Esc: cancel"))
 		}
 	} else {
-		for i := 0; i < maxResults; i++ {
+		for i := range maxResults {
 			item := f.items[i]
 			prefix := "  "
 			style := lipgloss.NewStyle().Foreground(th.Text)
@@ -207,31 +261,75 @@ func (f Finder) View() string {
 			}
 
 			line := fmt.Sprintf("%s%s", prefix, title)
-			if item.Extra != "" {
-				dim := lipgloss.NewStyle().Foreground(th.Dim)
-				line += " " + dim.Render(item.Extra)
+
+			// Truncate to left column width
+			if lipgloss.Width(line) > leftWidth {
+				line = line[:leftWidth-3] + "..."
 			}
 
-			// Truncate
-			if lipgloss.Width(line) > innerWidth {
-				line = line[:innerWidth-3] + "..."
-			}
-
-			lines = append(lines, style.Render(line))
+			leftLines = append(leftLines, style.Render(line))
 		}
 
 		if len(f.items) > maxResults {
 			dim := lipgloss.NewStyle().Foreground(th.Dim)
-			lines = append(lines, dim.Render(fmt.Sprintf("  ... and %d more", len(f.items)-maxResults)))
+			leftLines = append(leftLines, dim.Render(fmt.Sprintf("  +%d more", len(f.items)-maxResults)))
 		}
 	}
 
-	content := strings.Join(lines, "\n")
+	// Pad left column to full height
+	for len(leftLines) < contentHeight {
+		leftLines = append(leftLines, "")
+	}
+
+	leftCol := lipgloss.NewStyle().
+		Width(leftWidth).
+		Render(strings.Join(leftLines, "\n"))
+
+	// --- Right column: preview ---
+	dim := lipgloss.NewStyle().Foreground(th.Dim)
+
+	var rightLines []string
+	if f.preview == "" {
+		rightLines = append(rightLines, dim.Render("No preview"))
+	} else {
+		allLines := strings.Split(f.preview, "\n")
+		end := min(f.previewScroll+contentHeight, len(allLines))
+		start := min(f.previewScroll, len(allLines))
+		visible := allLines[start:end]
+		for _, l := range visible {
+			// Truncate long lines
+			if lipgloss.Width(l) > rightWidth {
+				l = l[:rightWidth-1] + "…"
+			}
+			rightLines = append(rightLines, dim.Render(l))
+		}
+	}
+
+	// Pad right column to full height
+	for len(rightLines) < contentHeight {
+		rightLines = append(rightLines, "")
+	}
+
+	rightCol := lipgloss.NewStyle().
+		Width(rightWidth).
+		BorderLeft(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(th.Border).
+		PaddingLeft(1).
+		Render(strings.Join(rightLines, "\n"))
+
+	content := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, rightCol)
+
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(th.Accent).
+		Padding(0, 1).
+		Width(innerWidth)
+
 	return borderStyle.Render(content)
 }
 
 func (f *Finder) SetSize(width, height int) {
 	f.width = width
 	f.height = height
-	f.input.Width = width/2 - 8
 }
