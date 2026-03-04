@@ -102,10 +102,56 @@ func (a *App) previewNote(relPath string) string {
 	return string(data)
 }
 
+// searchNoteContent returns finder items matching a substring in note content.
+func (a *App) searchNoteContent(query string) []panel.FinderItem {
+	if query == "" || a.db == nil {
+		return nil
+	}
+
+	notes, err := a.db.ListAllNotes(200)
+	if err != nil {
+		return nil
+	}
+
+	lowerQuery := strings.ToLower(query)
+	var items []panel.FinderItem
+
+	for _, note := range notes {
+		absPath := filepath.Join(a.cfg.VaultPath, note.Path)
+		data, err := os.ReadFile(absPath)
+		if err != nil {
+			continue
+		}
+
+		lines := strings.Split(string(data), "\n")
+		for i, line := range lines {
+			if strings.Contains(strings.ToLower(line), lowerQuery) {
+				items = append(items, panel.FinderItem{
+					Title: fmt.Sprintf("%s:%d", note.Path, i+1),
+					Path:  note.Path,
+					Line:  i + 1,
+					Extra: strings.TrimSpace(line),
+				})
+				if len(items) >= 50 {
+					return items
+				}
+			}
+		}
+	}
+
+	return items
+}
+
 // handleFinderResult handles a file selection from the finder.
-func (a *App) handleFinderResult(path string) tea.Cmd {
+func (a *App) handleFinderResult(path string, line int) tea.Cmd {
 	a.navigateTo(path)
 	a.focused = focusEditor
+	if line > 0 {
+		rpc := a.editor.GetRPC()
+		if rpc != nil {
+			rpc.SetCursorPosition(line, 0) //nolint:errcheck // best-effort cursor jump
+		}
+	}
 	return nil
 }
 

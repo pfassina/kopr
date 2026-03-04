@@ -16,11 +16,13 @@ type FinderItem struct {
 	Title string
 	Path  string
 	Extra string // e.g., heading text, tag
+	Line  int    // line number (0 = no line jump)
 }
 
 // FinderResultMsg is sent when a finder item is selected.
 type FinderResultMsg struct {
 	Path string
+	Line int
 }
 
 // FinderCreateRequestMsg is sent when the user requests to create a new note
@@ -54,6 +56,8 @@ type Finder struct {
 	preview       string
 	previewScroll int
 	theme         *theme.Theme
+	title         string
+	canCreate     bool
 }
 
 // SetTheme sets the color theme for the finder panel.
@@ -67,7 +71,9 @@ func NewFinder() Finder {
 	ti.Focus()
 
 	return Finder{
-		input: ti,
+		input:     ti,
+		title:     "Find Note",
+		canCreate: true,
 	}
 }
 
@@ -77,6 +83,14 @@ func (f *Finder) SetSearchFunc(fn SearchFunc) {
 
 func (f *Finder) SetPreviewFunc(fn PreviewFunc) {
 	f.previewFn = fn
+}
+
+func (f *Finder) SetTitle(title string) {
+	f.title = title
+}
+
+func (f *Finder) SetCanCreate(canCreate bool) {
+	f.canCreate = canCreate
 }
 
 func (f *Finder) Show() {
@@ -107,6 +121,16 @@ func (f *Finder) updatePreview() {
 		f.preview = ""
 	}
 	f.previewScroll = 0
+
+	// Auto-scroll to center the matched line in the preview pane.
+	if f.cursor < len(f.items) && f.items[f.cursor].Line > 0 && f.preview != "" {
+		target := f.items[f.cursor].Line - 1 // 0-indexed
+		ph := f.previewHeight()
+		scroll := target - ph/2
+		totalLines := strings.Count(f.preview, "\n") + 1
+		maxScroll := max(totalLines-ph, 0)
+		f.previewScroll = max(min(scroll, maxScroll), 0)
+	}
 }
 
 // previewHeight returns the number of visible lines in the preview pane.
@@ -136,14 +160,16 @@ func (f Finder) Update(msg tea.Msg) (Finder, tea.Cmd) {
 				item := f.items[f.cursor]
 				f.visible = false
 				return f, func() tea.Msg {
-					return FinderResultMsg{Path: item.Path}
+					return FinderResultMsg{Path: item.Path, Line: item.Line}
 				}
 			}
 			// No results — request note creation (the app will confirm).
-			query := strings.TrimSpace(f.input.Value())
-			if query != "" {
-				return f, func() tea.Msg {
-					return FinderCreateRequestMsg{Name: query}
+			if f.canCreate {
+				query := strings.TrimSpace(f.input.Value())
+				if query != "" {
+					return f, func() tea.Msg {
+						return FinderCreateRequestMsg{Name: query}
+					}
 				}
 			}
 			return f, nil
@@ -228,7 +254,7 @@ func (f Finder) View() string {
 	f.input.Width = leftWidth - 2
 
 	var leftLines []string
-	leftLines = append(leftLines, titleStyle.Render("Find Note"))
+	leftLines = append(leftLines, titleStyle.Render(f.title))
 	leftLines = append(leftLines, f.input.View())
 	leftLines = append(leftLines, "")
 
@@ -238,11 +264,13 @@ func (f Finder) View() string {
 		dim := lipgloss.NewStyle().Foreground(th.Dim)
 		leftLines = append(leftLines, dim.Render("No results"))
 
-		query := strings.TrimSpace(f.input.Value())
-		if query != "" {
-			leftLines = append(leftLines, "")
-			leftLines = append(leftLines, dim.Render(fmt.Sprintf("Enter: create %q", query)))
-			leftLines = append(leftLines, dim.Render("Esc: cancel"))
+		if f.canCreate {
+			query := strings.TrimSpace(f.input.Value())
+			if query != "" {
+				leftLines = append(leftLines, "")
+				leftLines = append(leftLines, dim.Render(fmt.Sprintf("Enter: create %q", query)))
+				leftLines = append(leftLines, dim.Render("Esc: cancel"))
+			}
 		}
 	} else {
 		for i := range maxResults {
@@ -287,6 +315,14 @@ func (f Finder) View() string {
 
 	// --- Right column: preview ---
 	dim := lipgloss.NewStyle().Foreground(th.Dim)
+	highlightText := lipgloss.NewStyle().Foreground(th.Accent)
+	highlightGutter := lipgloss.NewStyle().Foreground(th.Accent)
+
+	// Determine the highlighted line (0-indexed) in the preview.
+	highlightLine := -1
+	if f.cursor < len(f.items) && f.items[f.cursor].Line > 0 {
+		highlightLine = f.items[f.cursor].Line - 1
+	}
 
 	var rightLines []string
 	if f.preview == "" {
@@ -296,12 +332,17 @@ func (f Finder) View() string {
 		end := min(f.previewScroll+contentHeight, len(allLines))
 		start := min(f.previewScroll, len(allLines))
 		visible := allLines[start:end]
-		for _, l := range visible {
+		for i, l := range visible {
 			// Truncate long lines
 			if lipgloss.Width(l) > rightWidth {
 				l = l[:rightWidth-1] + "…"
 			}
-			rightLines = append(rightLines, dim.Render(l))
+			absIdx := start + i
+			if absIdx == highlightLine {
+				rightLines = append(rightLines, highlightGutter.Render("▌")+highlightText.Render(l))
+			} else {
+				rightLines = append(rightLines, " "+dim.Render(l))
+			}
 		}
 	}
 
