@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -89,6 +90,16 @@ func (a *App) searchNotes(query string) []panel.FinderItem {
 		}
 	}
 	return items
+}
+
+// previewNote returns the raw content of a note for the finder preview pane.
+func (a *App) previewNote(relPath string) string {
+	absPath := filepath.Join(a.cfg.VaultPath, relPath)
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // handleFinderResult handles a file selection from the finder.
