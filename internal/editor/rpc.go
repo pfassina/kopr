@@ -449,6 +449,159 @@ func (r *RPC) ClearHighlightBgs() {
 	}
 }
 
+// SetupMathRendering installs a custom math renderer that finds latex_block
+// nodes in the built-in markdown_inline treesitter tree, converts them via the
+// kopr-latex shell script, and overlays the result using Neovim extmarks.
+// This avoids requiring the external latex treesitter parser.
+// When enabled is false, any existing math rendering is torn down.
+func (r *RPC) SetupMathRendering(enabled bool) error {
+	return r.client.ExecLua(mathRenderingLua, nil, enabled)
+}
+
+const mathRenderingLua = `
+local enabled = ...
+
+-- Disable render-markdown.nvim's built-in latex handler (it requires a
+-- treesitter latex parser we don't ship). We handle math ourselves below.
+local rm_ok, rm_state = pcall(require, 'render-markdown.state')
+if rm_ok and rm_state and rm_state.config then
+  if not rm_state.config.latex then rm_state.config.latex = {} end
+  rm_state.config.latex.enabled = false
+end
+
+local group = 'KoprMath'
+vim.api.nvim_create_augroup(group, {clear = true})
+
+if not enabled then return end
+if vim.fn.executable('kopr-latex') ~= 1 then return end
+
+local ns = vim.api.nvim_create_namespace('kopr-math')
+local conv_cache = {}
+
+local function convert(input)
+  if conv_cache[input] ~= nil then return conv_cache[input] end
+  local result = vim.system({'kopr-latex'}, {stdin = input, text = true}):wait()
+  if result.code == 0 and result.stdout then
+    local out = vim.trim(result.stdout)
+    if out ~= '' then conv_cache[input] = out; return out end
+  end
+  conv_cache[input] = false
+  return false
+end
+
+-- render_math renders all math in buf, skipping nodes that touch skip_row
+-- so the cursor line shows raw LaTeX instead of both raw + virtual text.
+local function render_math(buf, skip_row)
+  vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+
+  local ok, parser = pcall(vim.treesitter.get_parser, buf, 'markdown')
+  if not ok then return end
+  parser:parse(true)
+
+  local nodes = {}
+  parser:for_each_tree(function(tree, lang_tree)
+    if lang_tree:lang() ~= 'markdown_inline' then return end
+    local function walk(node)
+      if node:type() == 'latex_block' then
+        nodes[#nodes + 1] = node
+        return
+      end
+      for i = 0, node:child_count() - 1 do walk(node:child(i)) end
+    end
+    walk(tree:root())
+  end)
+
+  for _, node in ipairs(nodes) do
+    local sr, sc, er, ec = node:range()
+
+    -- Skip nodes on the cursor line so raw LaTeX is visible for editing
+    if skip_row and skip_row >= sr and skip_row <= er then
+      goto continue
+    end
+
+    local text = vim.treesitter.get_node_text(node, buf)
+    local inner = text:match('^%$%$%s*(.-)%s*%$%$$') or text:match('^%$(.-)%$$')
+    if not inner or inner == '' then goto continue end
+    inner = vim.trim(inner)
+
+    local converted = convert(inner)
+    if not converted then goto continue end
+
+    if sr == er then
+      -- Inline math: conceal original, show converted inline
+      vim.api.nvim_buf_set_extmark(buf, ns, sr, sc, {
+        end_row = er, end_col = ec,
+        conceal = '',
+        virt_text = {{converted, 'RenderMarkdownMath'}},
+        virt_text_pos = 'inline',
+      })
+    else
+      -- Block math: conceal all lines, show converted as virtual lines
+      for r = sr, er do
+        local line = vim.api.nvim_buf_get_lines(buf, r, r + 1, false)[1] or ''
+        vim.api.nvim_buf_set_extmark(buf, ns, r, 0, {
+          end_row = r, end_col = #line, conceal = '',
+        })
+      end
+      local vlines = {}
+      for ln in converted:gmatch('[^\n]+') do
+        vlines[#vlines + 1] = {{ln, 'RenderMarkdownMath'}}
+      end
+      if #vlines > 0 then
+        vim.api.nvim_buf_set_extmark(buf, ns, sr, 0, {
+          virt_lines = vlines, virt_lines_above = true,
+        })
+      end
+    end
+    ::continue::
+  end
+end
+
+local last_cursor_row = -1
+
+local function scheduled_render(buf, skip_row)
+  vim.schedule(function()
+    if vim.api.nvim_buf_is_valid(buf) then
+      render_math(buf, skip_row)
+    end
+  end)
+end
+
+vim.api.nvim_create_autocmd(
+  {'BufEnter', 'TextChanged', 'InsertLeave'},
+  {
+    group = group,
+    pattern = '*.md',
+    callback = function(args)
+      if not vim.api.nvim_buf_is_valid(args.buf) then return end
+      if vim.bo[args.buf].filetype ~= 'markdown' then return end
+      last_cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
+      scheduled_render(args.buf, last_cursor_row)
+    end,
+  }
+)
+
+-- Re-render when cursor moves to a different line (reveal raw on cursor line)
+vim.api.nvim_create_autocmd('CursorMoved', {
+  group = group,
+  pattern = '*.md',
+  callback = function(args)
+    if not vim.api.nvim_buf_is_valid(args.buf) then return end
+    local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+    if row == last_cursor_row then return end
+    last_cursor_row = row
+    render_math(args.buf, row)
+  end,
+})
+
+-- Render the current buffer immediately if it's markdown
+local buf = vim.api.nvim_get_current_buf()
+if vim.bo[buf].filetype == 'markdown' then
+  last_cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
+  scheduled_render(buf, last_cursor_row)
+end
+`
+
 // Close closes the RPC connection.
 func (r *RPC) Close() error {
 	if r.client != nil {

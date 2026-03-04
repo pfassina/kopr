@@ -106,7 +106,7 @@ func New(cfg config.Config) App {
 
 	a := App{
 		cfg:      cfg,
-		editor:   editor.New(cfg.VaultPath, editor.ProfileMode(cfg.NvimMode), cfg.Colorscheme),
+		editor:   editor.New(cfg.VaultPath, editor.ProfileMode(cfg.NvimMode), cfg.Colorscheme, cfg.RenderMath),
 		tree:     t,
 		info:     panel.NewInfo(),
 		status:   panel.NewStatus(cfg.VaultPath),

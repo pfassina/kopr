@@ -23,6 +23,9 @@ type Config struct {
 
 	// AutoFormatOnSave enables Kopr's deterministic Markdown formatter after save.
 	AutoFormatOnSave bool
+
+	// RenderMath enables LaTeX math rendering via render-markdown.nvim's latex module.
+	RenderMath bool
 }
 
 func Default() Config {
@@ -45,5 +48,6 @@ func Default() Config {
 		LeaderTimeout:    500,
 		NvimMode:         "managed",
 		AutoFormatOnSave: true,
+		RenderMath:       true,
 	}
 }

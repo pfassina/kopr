@@ -13,6 +13,9 @@ import (
 //go:embed nvim_init.lua
 var defaultInitLua []byte
 
+//go:embed kopr_latex.sh
+var latexConverterSh []byte
+
 type ProfileMode string
 
 const (
@@ -37,6 +40,11 @@ func ConfigDir() (string, error) {
 // In managed mode, writes init.lua if it doesn't exist.
 // In user mode, logs a warning if the directory doesn't exist.
 func EnsureProfile(mode ProfileMode) error {
+	// Deploy LaTeX converter script (needed regardless of profile mode)
+	if err := ensureLatexConverter(); err != nil {
+		return err
+	}
+
 	dir, err := ConfigDir()
 	if err != nil {
 		return err
@@ -218,11 +226,36 @@ func parseSemver(s string) (int, int, error) {
 	return major, minor, nil
 }
 
+// ensureLatexConverter writes the embedded LaTeX converter script to the
+// kopr bin directory so Neovim can use it as a shell command.
+func ensureLatexConverter() error {
+	dataDir, err := DataDir()
+	if err != nil {
+		return err
+	}
+	binDir := filepath.Join(dataDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		return fmt.Errorf("create bin dir: %w", err)
+	}
+	dest := filepath.Join(binDir, "kopr-latex")
+	if err := os.WriteFile(dest, latexConverterSh, 0755); err != nil {
+		return fmt.Errorf("write kopr-latex: %w", err)
+	}
+	return nil
+}
+
 // NvimEnv returns environment variables for the managed Neovim process.
 func NvimEnv() []string {
-	return []string{
+	env := []string{
 		"NVIM_APPNAME=kopr",
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 	}
+	// Prepend kopr bin directory to PATH so the latex converter is available.
+	dataDir, err := DataDir()
+	if err == nil {
+		binDir := filepath.Join(dataDir, "bin")
+		env = append(env, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	return env
 }
