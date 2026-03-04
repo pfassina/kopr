@@ -315,7 +315,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.setFocus(focusEditor)
 
 	case panel.FinderResultMsg:
-		a.handleFinderResult(msg.Path)
+		a.handleFinderResult(msg.Path, msg.Line)
 		a.setFocus(focusEditor)
 
 	case panel.FinderCreateRequestMsg:
@@ -325,6 +325,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case panel.FinderClosedMsg:
+		a.finder.SetSearchFunc(a.searchNotes)
+		a.finder.SetPreviewFunc(a.previewNote)
+		a.finder.SetTitle("Find Note")
+		a.finder.SetCanCreate(true)
 		a.setFocus(focusEditor)
 
 	case editor.FollowLinkMsg:

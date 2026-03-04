@@ -51,6 +51,10 @@ func newBindings() map[string]*Binding {
 					a.ToggleFinder()
 					return nil
 				}},
+				"/": {Key: "/", Label: "Find in notes", Action: func(a *App) tea.Cmd {
+					a.OpenGrepFinder()
+					return nil
+				}},
 			},
 		},
 		"n": {
@@ -210,6 +214,18 @@ func (a *App) ToggleFinder() {
 		a.finder.Show()
 		a.focused = focusFinder
 	}
+}
+
+func (a *App) OpenGrepFinder() {
+	if a.finder.Visible() {
+		return
+	}
+	a.finder.SetTitle("Find in Notes")
+	a.finder.SetCanCreate(false)
+	a.finder.SetSearchFunc(a.searchNoteContent)
+	a.finder.SetPreviewFunc(a.previewNote)
+	a.finder.Show()
+	a.focused = focusFinder
 }
 
 func (a *App) CreateBlankNote() {
