@@ -602,6 +602,48 @@ if vim.bo[buf].filetype == 'markdown' then
 end
 `
 
+// GetVisualSelection returns the text currently selected in visual mode.
+// If not in a visual mode, returns an empty string.
+func (r *RPC) GetVisualSelection() (string, error) {
+	var text string
+	err := r.client.ExecLua(`
+local mode = vim.fn.mode()
+if mode ~= 'v' and mode ~= 'V' and mode ~= '\22' then
+  return ''
+end
+-- Yank the selection into the unnamed register, then restore mode
+vim.cmd('normal! y')
+return vim.fn.getreg('"')
+`, &text)
+	return text, err
+}
+
+// CutSelection yanks the visual selection text and deletes it.
+func (r *RPC) CutSelection() (string, error) {
+	var text string
+	err := r.client.ExecLua(`
+local mode = vim.fn.mode()
+if mode ~= 'v' and mode ~= 'V' and mode ~= '\22' then
+  return ''
+end
+vim.cmd('normal! y')
+local t = vim.fn.getreg('"')
+vim.cmd('normal! gvd')
+return t
+`, &text)
+	return text, err
+}
+
+// PasteText pastes text at the current cursor position using Neovim's paste API.
+func (r *RPC) PasteText(text string) error {
+	return r.client.ExecLua("vim.api.nvim_paste(..., true, -1)", nil, text)
+}
+
+// SelectAll selects all text in the current buffer.
+func (r *RPC) SelectAll() error {
+	return r.client.Command("normal! ggVG")
+}
+
 // Close closes the RPC connection.
 func (r *RPC) Close() error {
 	if r.client != nil {

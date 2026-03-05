@@ -204,6 +204,11 @@ func (t *Tree) ClearSelected() {
 	t.selected = make(map[string]bool)
 }
 
+// SetClipboard sets the clipboard to the given paths and operation.
+func (t *Tree) SetClipboard(paths []string, op ClipboardOp) {
+	t.clipboard = Clipboard{Op: op, Paths: append([]string(nil), paths...)}
+}
+
 // ClipboardInfo returns the current clipboard operation and count.
 func (t *Tree) ClipboardInfo() (ClipboardOp, int) {
 	return t.clipboard.Op, len(t.clipboard.Paths)
@@ -521,4 +526,49 @@ func (t *Tree) SetFocused(focused bool) {
 
 func (t Tree) ShowingHelp() bool {
 	return t.showHelp
+}
+
+// Offset returns the current scroll offset.
+func (t Tree) Offset() int {
+	return t.offset
+}
+
+// EntryAt returns the entry at the given visible index, or false if out of bounds.
+func (t Tree) EntryAt(idx int) (vault.Entry, bool) {
+	if idx < 0 || idx >= len(t.entries) {
+		return vault.Entry{}, false
+	}
+	return t.entries[idx], true
+}
+
+// ToggleCollapse toggles the collapsed state of a directory entry.
+func (t *Tree) ToggleCollapse(path string) {
+	t.collapsed[path] = !t.collapsed[path]
+	t.rebuildVisible()
+}
+
+// SetCursor moves the cursor to the given index with bounds checking.
+func (t *Tree) SetCursor(idx int) {
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(t.entries) {
+		idx = len(t.entries) - 1
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	t.cursor = idx
+
+	// Scroll into view
+	viewHeight := t.height - 2
+	if viewHeight < 1 {
+		viewHeight = 1
+	}
+	if t.cursor < t.offset {
+		t.offset = t.cursor
+	}
+	if t.cursor-t.offset >= viewHeight {
+		t.offset = t.cursor - viewHeight + 1
+	}
 }
