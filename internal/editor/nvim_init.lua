@@ -58,6 +58,16 @@ vim.keymap.set("i", "<M-BS>", "<C-w>", { noremap = true })
 vim.keymap.set("i", "<M-Left>", "<C-Left>", { noremap = true })
 vim.keymap.set("i", "<M-Right>", "<C-Right>", { noremap = true })
 
+-- Treesitter: load extra parsers from user-configured path (treesitter_parsers).
+-- This lets Kopr syntax-highlight fenced code blocks for languages beyond the
+-- handful bundled with Neovim (c, lua, markdown, vim, vimdoc, query).
+do
+    local parsers_path = os.getenv("KOPR_TREESITTER_PARSERS")
+    if parsers_path and parsers_path ~= "" then
+        vim.opt.runtimepath:prepend(parsers_path)
+    end
+end
+
 -- Markdown-specific settings
 vim.api.nvim_create_autocmd("FileType", {
     pattern = "markdown",
@@ -65,6 +75,8 @@ vim.api.nvim_create_autocmd("FileType", {
         vim.opt_local.shiftwidth = 2
         vim.opt_local.tabstop = 2
         vim.opt_local.conceallevel = 2
+        -- Enable treesitter highlighting (syntax-highlights fenced code blocks).
+        pcall(vim.treesitter.start)
     end,
 })
 

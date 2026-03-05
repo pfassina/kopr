@@ -88,6 +88,7 @@ leader_key = ","
 leader_timeout = 300
 auto_format_on_save = false
 render_math = false
+treesitter_parsers = "~/.local/share/nvim/site"
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -127,6 +128,10 @@ render_math = false
 	}
 	if cfg.RenderMath != false {
 		t.Errorf("RenderMath = %v, want %v", cfg.RenderMath, false)
+	}
+	wantParsers := filepath.Join(home, ".local", "share", "nvim", "site")
+	if cfg.TreesitterParsers != wantParsers {
+		t.Errorf("TreesitterParsers = %q, want %q", cfg.TreesitterParsers, wantParsers)
 	}
 }
 

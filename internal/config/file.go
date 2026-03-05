@@ -17,8 +17,9 @@ type fileConfig struct {
 	NvimMode          *string `toml:"nvim_mode"`
 	LeaderKey         *string `toml:"leader_key"`
 	LeaderTimeout     *int    `toml:"leader_timeout"`
-	AutoFormatOnSave  *bool   `toml:"auto_format_on_save"`
-	RenderMath        *bool   `toml:"render_math"`
+	AutoFormatOnSave    *bool   `toml:"auto_format_on_save"`
+	RenderMath          *bool   `toml:"render_math"`
+	TreesitterParsers   *string `toml:"treesitter_parsers"`
 }
 
 // ConfigDir returns the kopr config directory, respecting XDG_CONFIG_HOME.
@@ -78,6 +79,9 @@ func LoadFile(cfg *Config) (bool, error) {
 	}
 	if fc.RenderMath != nil {
 		cfg.RenderMath = *fc.RenderMath
+	}
+	if fc.TreesitterParsers != nil {
+		cfg.TreesitterParsers = ExpandHome(*fc.TreesitterParsers)
 	}
 
 	return true, nil

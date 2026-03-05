@@ -15,12 +15,16 @@ type nvimPTY struct {
 	socket string
 }
 
-func startNvim(width, height int, socketPath, vaultPath string) (*nvimPTY, error) {
+func startNvim(width, height int, socketPath, vaultPath, treesitterParsers string) (*nvimPTY, error) {
 	cmd := exec.Command("nvim",
 		"--listen", socketPath,
 	)
 	cmd.Dir = vaultPath
-	cmd.Env = append(os.Environ(), NvimEnv()...)
+	env := append(os.Environ(), NvimEnv()...)
+	if treesitterParsers != "" {
+		env = append(env, "KOPR_TREESITTER_PARSERS="+treesitterParsers)
+	}
+	cmd.Env = env
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Rows: uint16(height),

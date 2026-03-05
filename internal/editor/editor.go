@@ -75,8 +75,9 @@ type Editor struct {
 	vaultPath   string
 	socketPath  string
 	profileMode ProfileMode
-	colorscheme string
-	renderMath  bool
+	colorscheme        string
+	renderMath         bool
+	treesitterParsers  string
 	theme       *theme.Theme
 	nvim        *nvimPTY
 	rpc         *RPC
@@ -92,15 +93,16 @@ type Editor struct {
 // SetTheme sets the color theme for the editor splash screen.
 func (e *Editor) SetTheme(th *theme.Theme) { e.theme = th }
 
-func New(vaultPath string, profileMode ProfileMode, colorscheme string, renderMath bool) Editor {
+func New(vaultPath string, profileMode ProfileMode, colorscheme string, renderMath bool, treesitterParsers string) Editor {
 	return Editor{
-		vaultPath:   vaultPath,
-		profileMode: profileMode,
-		colorscheme: colorscheme,
-		renderMath:  renderMath,
-		mode:        ModeNormal,
-		focused:     true,
-		showSplash:  true,
+		vaultPath:         vaultPath,
+		profileMode:       profileMode,
+		colorscheme:       colorscheme,
+		renderMath:        renderMath,
+		treesitterParsers: treesitterParsers,
+		mode:              ModeNormal,
+		focused:           true,
+		showSplash:        true,
 	}
 }
 
@@ -114,7 +116,7 @@ func (e Editor) Init() tea.Cmd {
 
 // start spawns Neovim and returns resources via message.
 func (e Editor) start() tea.Cmd {
-	width, height, vaultPath, profileMode := e.width, e.height, e.vaultPath, e.profileMode
+	width, height, vaultPath, profileMode, tsParsers := e.width, e.height, e.vaultPath, e.profileMode, e.treesitterParsers
 	return func() tea.Msg {
 		if err := EnsureProfile(profileMode); err != nil {
 			return editorErrorMsg{fmt.Errorf("nvim profile: %w", err)}
@@ -125,7 +127,7 @@ func (e Editor) start() tea.Cmd {
 			return editorErrorMsg{fmt.Errorf("remove socket %s: %w", socketPath, err)}
 		}
 
-		nvim, err := startNvim(width, height, socketPath, vaultPath)
+		nvim, err := startNvim(width, height, socketPath, vaultPath, tsParsers)
 		if err != nil {
 			return editorErrorMsg{err}
 		}
