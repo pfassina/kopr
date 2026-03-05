@@ -375,3 +375,61 @@ func (i *Info) SetSize(width, height int) {
 func (i *Info) SetFocused(focused bool) {
 	i.focused = focused
 }
+
+// Offset returns the current scroll offset.
+func (i Info) Offset() int {
+	return i.offset
+}
+
+// SetCursor moves the cursor to the given flat-list index, skipping separators.
+func (i *Info) SetCursor(idx int) {
+	rows := i.flatList()
+	if len(rows) == 0 {
+		return
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(rows) {
+		idx = len(rows) - 1
+	}
+	// Skip separators forward
+	for idx < len(rows) && rows[idx].kind == rowSeparator {
+		idx++
+	}
+	if idx >= len(rows) {
+		idx = len(rows) - 1
+		for idx > 0 && rows[idx].kind == rowSeparator {
+			idx--
+		}
+	}
+	i.cursor = idx
+	i.scrollIntoView()
+}
+
+// ActivateRow performs the default action for a row: open links, jump to
+// outline headings, or toggle section collapse.
+func (i *Info) ActivateRow(idx int) tea.Cmd {
+	rows := i.flatList()
+	if idx < 0 || idx >= len(rows) {
+		return nil
+	}
+	row := rows[idx]
+	switch row.kind {
+	case rowHeader:
+		i.sections[row.sectionIdx].collapsed = !i.sections[row.sectionIdx].collapsed
+		i.clampCursor()
+		return nil
+	case rowItem:
+		item := i.sections[row.sectionIdx].items[row.itemIdx]
+		if item.Path != "" {
+			path := item.Path
+			return func() tea.Msg { return FileSelectedMsg{Path: path} }
+		}
+		if item.Line > 0 {
+			line := item.Line
+			return func() tea.Msg { return InfoGotoLineMsg{Line: line} }
+		}
+	}
+	return nil
+}

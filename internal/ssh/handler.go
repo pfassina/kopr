@@ -17,7 +17,7 @@ func NewHandler(cfg config.Config) bts.Handler {
 
 		opts := []tea.ProgramOption{
 			tea.WithAltScreen(),
-			tea.WithMouseCellMotion(),
+			tea.WithMouseAllMotion(),
 		}
 		opts = append(opts, bts.MakeOptions(sess)...)
 

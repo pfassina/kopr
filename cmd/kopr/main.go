@@ -114,7 +114,7 @@ func runLocal(cfg config.Config) {
 
 	a := app.New(cfg)
 	a.SetOutput(os.Stdout)
-	p := tea.NewProgram(&a, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(&a, tea.WithAltScreen(), tea.WithMouseAllMotion())
 	a.SetProgram(p)
 	if _, err := p.Run(); err != nil {
 		log.Fatal(err)

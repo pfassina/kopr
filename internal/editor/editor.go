@@ -86,8 +86,9 @@ type Editor struct {
 	mode        NvimMode
 	err         error
 	program     *tea.Program
-	focused     bool
-	showSplash  bool
+	focused        bool
+	showSplash     bool
+	lastMouseButton tea.MouseButton
 }
 
 // SetTheme sets the color theme for the editor splash screen.
@@ -236,6 +237,11 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 				return e, tea.Quit
 			}
 		}
+		// Enable mouse support so Neovim processes mouse events from the PTY
+		if err := e.rpc.ExecCommand("set mouse=a"); err != nil {
+			e.err = err
+			return e, tea.Quit
+		}
 		// Ensure left gutter aligns buffer text with panel titles
 		if err := e.rpc.ExecCommand("set foldcolumn=1"); err != nil {
 			e.err = err
@@ -276,6 +282,26 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 	case vtClosedMsg:
 		debugf("vtClosedMsg: %v", msg.err)
 		return e, tea.Quit
+
+	case EditorMouseMsg:
+		if e.nvim == nil || e.showSplash {
+			return e, nil
+		}
+		// Track pressed button so we can encode releases correctly
+		if msg.Action == tea.MouseActionPress {
+			e.lastMouseButton = msg.Button
+		}
+		raw := mouseMsgToBytes(msg.MouseMsg, msg.Col, msg.Row, e.lastMouseButton)
+		if raw != nil {
+			if _, err := e.nvim.file.Write(raw); err != nil {
+				e.err = err
+				return e, tea.Quit
+			}
+		}
+		if msg.Action == tea.MouseActionRelease {
+			e.lastMouseButton = tea.MouseButtonNone
+		}
+		return e, nil
 
 	case tea.KeyMsg:
 		if e.nvim == nil || e.showSplash {

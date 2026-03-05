@@ -46,7 +46,8 @@ type App struct {
 	status   panel.Status
 	whichKey panel.WhichKey
 	finder   panel.Finder
-	prompt   panel.Prompt
+	prompt      panel.Prompt
+	contextMenu panel.ContextMenu
 	vault    *vault.Vault
 	db       *index.DB
 	indexer  *index.Indexer
@@ -77,6 +78,19 @@ type App struct {
 	// output is the terminal writer for OSC 52 clipboard sequences.
 	// os.Stdout for local mode, the SSH session for SSH mode.
 	output io.Writer
+
+	// clipboardText is an internal clipboard buffer populated on every yank.
+	// Used for context menu paste since we can't read the remote clipboard.
+	clipboardText string
+
+	// doubleClick tracks timing/position for double-click detection.
+	doubleClick doubleClickTracker
+
+	// contextMenuTreeIdx stores the tree entry index that was right-clicked.
+	contextMenuTreeIdx int
+
+	// contextMenuInfoIdx stores the info row index that was right-clicked.
+	contextMenuInfoIdx int
 }
 
 // navigateTo opens a note and updates the navigation history.
@@ -112,7 +126,8 @@ func New(cfg config.Config) App {
 		status:   panel.NewStatus(cfg.VaultPath),
 		whichKey: panel.NewWhichKey(),
 		finder:   f,
-		prompt:   panel.NewPrompt(),
+		prompt:      panel.NewPrompt(),
+		contextMenu: panel.NewContextMenu(),
 		vault:    v,
 		store:    store,
 		theme:    theme.DefaultTheme(),
@@ -128,6 +143,7 @@ func New(cfg config.Config) App {
 	a.status.SetTheme(&a.theme)
 	a.whichKey.SetTheme(&a.theme)
 	a.editor.SetTheme(&a.theme)
+	a.contextMenu.SetTheme(&a.theme)
 
 	// Initialize index
 	dbPath := filepath.Join(cfg.VaultPath, ".kopr", "index.db")
@@ -179,6 +195,7 @@ func (a *App) Init() tea.Cmd {
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case editor.YankMsg:
+		a.clipboardText = msg.Text
 		return a, a.writeClipboard(msg.Text)
 
 	case tea.KeyMsg:
@@ -216,6 +233,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
+		// Ctrl+Shift+C to copy visual selection
+		if msg.String() == "ctrl+shift+c" && a.focused == focusEditor && !a.editor.ShowSplash() {
+			return a, a.copySelectedText()
+		}
+
 		// Ctrl+h/l to switch panel focus
 		switch msg.String() {
 		case "ctrl+h":
@@ -248,6 +270,143 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.focused == focusTree || a.focused == focusInfo {
 			break
 		}
+
+	case tea.MouseMsg:
+		// Dismiss context menu on click outside it (only on press, not motion/release)
+		if a.contextMenu.Visible() {
+			cx, cy := a.contextMenu.Position()
+			cw, ch := a.contextMenu.Dimensions()
+			inside := msg.X >= cx && msg.X < cx+cw && msg.Y >= cy && msg.Y < cy+ch
+			if inside {
+				// Translate to menu-local coordinates and forward
+				localMsg := msg
+				localMsg.X = msg.X - cx
+				localMsg.Y = msg.Y - cy
+				var cmd tea.Cmd
+				a.contextMenu, cmd = a.contextMenu.Update(localMsg)
+				return a, cmd
+			}
+			// Only dismiss on press outside, not on motion/release
+			if msg.Action == tea.MouseActionPress {
+				a.contextMenu.Hide()
+			}
+			return a, nil
+		}
+
+		hit := a.hitTestMouse(msg)
+		switch hit.target {
+		case mouseTargetEditor:
+			// Left press: focus editor + double-click detection
+			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+				a.setFocus(focusEditor)
+			}
+
+			// Right-click on editor: show text operations context menu
+			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight {
+				hasFile := a.currentFile != ""
+				a.contextMenu.Show(hit.screenX, hit.screenY, []panel.ContextMenuItem{
+					{Label: "Cut", Action: "text-cut", Disabled: !hasFile},
+					{Label: "Copy", Action: "text-copy", Disabled: !hasFile},
+					{Label: "Paste", Action: "text-paste", Disabled: !hasFile},
+					{Label: "Select All", Action: "text-select-all", Disabled: !hasFile},
+				})
+				return a, nil
+			}
+
+			// Filter no-button motion (hover) from being forwarded to Neovim
+			if msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonNone {
+				return a, nil
+			}
+
+			// Forward other mouse events to editor (left click, scroll, drag)
+			if hit.editorRow >= 0 {
+				editorMsg := editor.EditorMouseMsg{
+					MouseMsg: msg,
+					Col:      hit.editorCol,
+					Row:      hit.editorRow,
+				}
+				a.editor, _ = a.editor.Update(editorMsg)
+			}
+			return a, nil
+
+		case mouseTargetTree:
+			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+				a.setFocus(focusTree)
+				// Move tree cursor to clicked row
+				rowIdx := msg.Y - 1 + a.tree.Offset()
+				a.tree.SetCursor(rowIdx)
+
+				// Double-click: open file or toggle dir
+				if a.doubleClick.isDoubleClick(msg.X, msg.Y) {
+					if entry, ok := a.tree.EntryAt(rowIdx); ok {
+						if !entry.IsDir {
+							return a, func() tea.Msg {
+								return panel.FileSelectedMsg{Path: entry.Path}
+							}
+						}
+						// Toggle collapsed dir handled by SetCursor + enter-like behavior
+						a.tree.ToggleCollapse(entry.Path)
+					}
+				}
+				return a, nil
+			}
+			// Right-click on tree: show file operations context menu
+			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight {
+				a.setFocus(focusTree)
+				rowIdx := msg.Y - 1 + a.tree.Offset()
+				a.tree.SetCursor(rowIdx)
+				a.contextMenuTreeIdx = rowIdx
+
+				entry, hasEntry := a.tree.EntryAt(rowIdx)
+				isFile := hasEntry && !entry.IsDir
+				a.contextMenu.Show(hit.screenX, hit.screenY, []panel.ContextMenuItem{
+					{Label: "Open", Action: "tree-open", Disabled: !isFile},
+					{Label: "New Note", Action: "tree-new"},
+					{Label: "Rename", Action: "tree-rename", Disabled: !isFile},
+					{Label: "Delete", Action: "tree-delete", Disabled: !hasEntry},
+				})
+				return a, nil
+			}
+			return a, nil
+
+		case mouseTargetInfo:
+			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+				a.setFocus(focusInfo)
+				// Move info cursor to clicked row
+				rowIdx := msg.Y - 1 + a.info.Offset()
+				a.info.SetCursor(rowIdx)
+
+				// Double-click: activate the row
+				if a.doubleClick.isDoubleClick(msg.X, msg.Y) {
+					return a, a.info.ActivateRow(rowIdx)
+				}
+				return a, nil
+			}
+			// Right-click on info: show link/heading context menu
+			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight {
+				a.setFocus(focusInfo)
+				rowIdx := msg.Y - 1 + a.info.Offset()
+				a.info.SetCursor(rowIdx)
+				a.contextMenuInfoIdx = rowIdx
+
+				var items []panel.ContextMenuItem
+				items = append(items, panel.ContextMenuItem{Label: "Open", Action: "info-open"})
+				items = append(items, panel.ContextMenuItem{Label: "Go to", Action: "info-goto"})
+				a.contextMenu.Show(hit.screenX, hit.screenY, items)
+				return a, nil
+			}
+			return a, nil
+
+		case mouseTargetStatus:
+			return a, nil
+		}
+		return a, nil
+
+	case panel.ContextMenuResultMsg:
+		return a, a.handleContextMenuResult(msg.Action)
+
+	case panel.ContextMenuClosedMsg:
+		return a, nil
 
 	case leaderTimeoutMsg:
 		a.handleLeaderTimeout()
@@ -421,6 +580,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.status.SetTheme(&a.theme)
 			a.whichKey.SetTheme(&a.theme)
 			a.editor.SetTheme(&a.theme)
+			a.contextMenu.SetTheme(&a.theme)
 		}
 		return a, nil
 
@@ -567,6 +727,15 @@ func (a *App) View() string {
 		promptView := a.prompt.View()
 		if promptView != "" {
 			result = overlayCenter(result, promptView, a.width, a.height)
+		}
+	}
+
+	// Overlay context menu
+	if a.contextMenu.Visible() {
+		menuView := a.contextMenu.View()
+		if menuView != "" {
+			cx, cy := a.contextMenu.Position()
+			result = overlayAt(result, menuView, cx, cy, a.width, a.height)
 		}
 	}
 
@@ -1112,6 +1281,103 @@ func (a *App) handleRenameNote(newName, oldPath string) tea.Cmd {
 	return nil
 }
 
+// handleContextMenuResult dispatches context menu actions to the appropriate handlers.
+func (a *App) handleContextMenuResult(action string) tea.Cmd {
+	switch action {
+	// Editor text operations
+	case "text-cut":
+		return a.cutSelectedText()
+	case "text-copy":
+		return a.copySelectedText()
+	case "text-paste":
+		return a.pasteFromClipboard()
+	case "text-select-all":
+		return a.selectAllText()
+
+	// Tree file operations
+	case "tree-open":
+		if entry, ok := a.tree.EntryAt(a.contextMenuTreeIdx); ok && !entry.IsDir {
+			return func() tea.Msg { return panel.FileSelectedMsg{Path: entry.Path} }
+		}
+	case "tree-new":
+		return func() tea.Msg { return panel.TreeNewNoteMsg{} }
+	case "tree-rename":
+		if entry, ok := a.tree.EntryAt(a.contextMenuTreeIdx); ok && !entry.IsDir {
+			return func() tea.Msg {
+				return panel.TreeRenameNoteMsg{Path: entry.Path, Name: entry.Name}
+			}
+		}
+	case "tree-delete":
+		if entry, ok := a.tree.EntryAt(a.contextMenuTreeIdx); ok {
+			path := entry.Path
+			name := entry.Name
+			return func() tea.Msg {
+				return panel.TreeDeleteNoteMsg{Path: path, Name: name}
+			}
+		}
+
+	// Info panel operations
+	case "info-open", "info-goto":
+		return a.info.ActivateRow(a.contextMenuInfoIdx)
+	}
+	return nil
+}
+
+// copySelectedText copies the visual selection to the clipboard.
+func (a *App) copySelectedText() tea.Cmd {
+	rpc := a.editor.GetRPC()
+	if rpc == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		text, err := rpc.GetVisualSelection()
+		if err != nil || text == "" {
+			return nil
+		}
+		return editor.YankMsg{Text: text}
+	}
+}
+
+// cutSelectedText cuts the visual selection and copies it to the clipboard.
+func (a *App) cutSelectedText() tea.Cmd {
+	rpc := a.editor.GetRPC()
+	if rpc == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		text, err := rpc.CutSelection()
+		if err != nil || text == "" {
+			return nil
+		}
+		return editor.YankMsg{Text: text}
+	}
+}
+
+// pasteFromClipboard pastes the internal clipboard text into the editor.
+func (a *App) pasteFromClipboard() tea.Cmd {
+	rpc := a.editor.GetRPC()
+	if rpc == nil || a.clipboardText == "" {
+		return nil
+	}
+	text := a.clipboardText
+	return func() tea.Msg {
+		rpc.PasteText(text) //nolint:errcheck // best-effort paste
+		return nil
+	}
+}
+
+// selectAllText selects all text in the editor.
+func (a *App) selectAllText() tea.Cmd {
+	rpc := a.editor.GetRPC()
+	if rpc == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		rpc.SelectAll() //nolint:errcheck // best-effort select all
+		return nil
+	}
+}
+
 func (a *App) panelsVisible() (bool, bool) {
 	splash := a.editor.ShowSplash()
 	return a.showTree && !a.zenMode && !splash, a.showInfo && !a.zenMode && !splash
@@ -1302,6 +1568,60 @@ func overlayCenter(base, overlay string, width, height int) string {
 
 		line := left + overlayLine + right
 		// Ensure line doesn't overflow terminal width.
+		baseLines[row] = ansi.Truncate(line, width, "")
+	}
+
+	return strings.Join(baseLines, "\n")
+}
+
+// overlayAt renders an overlay string on top of base at the given screen position.
+// The overlay is clamped so it stays within width x height bounds.
+func overlayAt(base, overlay string, x, y, width, height int) string {
+	baseLines := strings.Split(base, "\n")
+	overlayLines := strings.Split(overlay, "\n")
+
+	overlayWidth := 0
+	for _, line := range overlayLines {
+		w := lipgloss.Width(line)
+		if w > overlayWidth {
+			overlayWidth = w
+		}
+	}
+
+	// Clamp position so the menu stays on screen
+	if x+overlayWidth > width {
+		x = width - overlayWidth
+	}
+	if x < 0 {
+		x = 0
+	}
+	if y+len(overlayLines) > height {
+		y = height - len(overlayLines)
+	}
+	if y < 0 {
+		y = 0
+	}
+
+	padToCol := func(s string, col int) string {
+		for lipgloss.Width(s) < col {
+			s += " "
+		}
+		return s
+	}
+
+	for i, overlayLine := range overlayLines {
+		row := y + i
+		if row >= len(baseLines) {
+			break
+		}
+
+		baseLine := baseLines[row]
+		baseLine = padToCol(baseLine, x)
+
+		left := ansi.Cut(baseLine, 0, x)
+		right := ansi.Cut(baseLine, x+overlayWidth, width)
+
+		line := left + overlayLine + right
 		baseLines[row] = ansi.Truncate(line, width, "")
 	}
 

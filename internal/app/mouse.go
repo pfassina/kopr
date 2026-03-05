@@ -1,6 +1,36 @@
 package app
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// doubleClickTracker detects double-clicks based on timing and position.
+type doubleClickTracker struct {
+	lastTime time.Time
+	lastX    int
+	lastY    int
+}
+
+// isDoubleClick returns true if (x, y) is a double-click relative to the
+// previous click. A double-click must occur within 500ms and within 2 cells.
+func (d *doubleClickTracker) isDoubleClick(x, y int) bool {
+	now := time.Now()
+	dx := x - d.lastX
+	dy := y - d.lastY
+	if dx < 0 {
+		dx = -dx
+	}
+	if dy < 0 {
+		dy = -dy
+	}
+	dbl := now.Sub(d.lastTime) < 500*time.Millisecond && dx <= 2 && dy <= 2
+	d.lastTime = now
+	d.lastX = x
+	d.lastY = y
+	return dbl
+}
 
 // mouseTarget identifies which panel a mouse event landed in.
 type mouseTarget int
