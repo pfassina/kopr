@@ -100,6 +100,10 @@ func newBindings() map[string]*Binding {
 				"s": {Key: "s", Label: "Toggle status", Action: func(a *App) tea.Cmd {
 					return nil // TODO
 				}},
+				"i": {Key: "i", Label: "Toggle images", Action: func(a *App) tea.Cmd {
+					a.ToggleImages()
+					return nil
+				}},
 			},
 		},
 		"z": {

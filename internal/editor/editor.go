@@ -11,6 +11,9 @@ import (
 	"github.com/pfassina/kopr/internal/theme"
 )
 
+// nextImageID is a process-global counter for Kitty image IDs.
+var nextImageID uint32 = 100
+
 // Messages
 type vtOutputMsg struct {
 	data []byte
@@ -77,6 +80,7 @@ type Editor struct {
 	profileMode ProfileMode
 	colorscheme        string
 	renderMath         bool
+	inlineImages       bool
 	treesitterParsers  string
 	theme       *theme.Theme
 	nvim        *nvimPTY
@@ -89,21 +93,33 @@ type Editor struct {
 	focused        bool
 	showSplash     bool
 	lastMouseButton tea.MouseButton
+
+	// Image rendering state
+	imageCache      *ImageCache
+	imagePlacements []ImagePlacement
+	uploadedImages  map[uint32]bool   // kitty image IDs that have been transmitted
+	imagePathToID   map[string]uint32 // abs path → kitty image ID
+	kittySupported  bool
 }
 
 // SetTheme sets the color theme for the editor splash screen.
 func (e *Editor) SetTheme(th *theme.Theme) { e.theme = th }
 
-func New(vaultPath string, profileMode ProfileMode, colorscheme string, renderMath bool, treesitterParsers string) Editor {
+func New(vaultPath string, profileMode ProfileMode, colorscheme string, renderMath bool, inlineImages bool, treesitterParsers string) Editor {
 	return Editor{
 		vaultPath:         vaultPath,
 		profileMode:       profileMode,
 		colorscheme:       colorscheme,
 		renderMath:        renderMath,
+		inlineImages:      inlineImages,
 		treesitterParsers: treesitterParsers,
 		mode:              ModeNormal,
 		focused:           true,
 		showSplash:        true,
+		imageCache:        NewImageCache(),
+		uploadedImages:    make(map[uint32]bool),
+		imagePathToID:     make(map[string]uint32),
+		kittySupported:    SupportsKittyGraphics(),
 	}
 }
 
@@ -252,6 +268,11 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 			e.err = err
 			return e, tea.Quit
 		}
+		// Configure image rendering
+		if err := e.rpc.SetupImageRendering(e.inlineImages, e.program, e.kittySupported); err != nil {
+			e.err = err
+			return e, tea.Quit
+		}
 		// Apply configured colorscheme and extract colors for TUI
 		colorCmd := e.applyColorscheme()
 		// Load splash buffer so neovim starts in a clean state
@@ -267,6 +288,15 @@ func (e Editor) Update(msg tea.Msg) (Editor, tea.Cmd) {
 
 	case ModeChangedMsg:
 		e.mode = msg.Mode
+		return e, nil
+
+	case ImagePositionsMsg:
+		e.imagePlacements = msg.Placements
+		// Load any images we haven't seen yet and send heights to Neovim
+		if e.inlineImages && e.rpc != nil {
+			cmd := e.processImagePlacements()
+			return e, cmd
+		}
 		return e, nil
 
 	case vtOutputMsg:
@@ -330,7 +360,11 @@ func (e Editor) View() string {
 	if e.showSplash {
 		return e.renderSplash()
 	}
-	return e.screen.render()
+	rendered := e.screen.render()
+	if e.inlineImages && e.kittySupported && len(e.imagePlacements) > 0 {
+		rendered = e.overlayImages(rendered)
+	}
+	return rendered
 }
 
 func (e Editor) renderSplash() string {
@@ -467,6 +501,116 @@ func (e Editor) applyColorscheme() tea.Cmd {
 		rpc.ClearHighlightBgs()
 		return ColorsReadyMsg{Colors: colors}
 	}
+}
+
+// InlineImages returns whether inline image rendering is enabled.
+func (e Editor) InlineImages() bool {
+	return e.inlineImages
+}
+
+// SetInlineImages updates the inline images toggle state.
+func (e *Editor) SetInlineImages(enabled bool) {
+	e.inlineImages = enabled
+	if !enabled {
+		e.imagePlacements = nil
+		// Delete all uploaded images
+		// (Kitty delete sequences will be garbage-collected by the terminal)
+	}
+}
+
+// processImagePlacements loads images that haven't been cached yet and sends
+// their heights back to Neovim for virtual line reservation.
+func (e Editor) processImagePlacements() tea.Cmd {
+	heights := make(map[string]int)
+	// Approximate cell dimensions: 8px wide, 16px tall (common for monospace)
+	const cellW, cellH = 8, 16
+
+	for i := range e.imagePlacements {
+		p := &e.imagePlacements[i]
+		cached := e.imageCache.Get(p.Path)
+		if cached == nil {
+			// Determine max dimensions: use editor width minus some margin
+			maxCols := e.width - 4
+			if maxCols < 10 {
+				maxCols = 10
+			}
+			maxRows := e.height / 2
+			if maxRows < 5 {
+				maxRows = 5
+			}
+			img, err := LoadImage(p.Path, maxCols, maxRows, cellW, cellH)
+			if err != nil {
+				continue
+			}
+			e.imageCache.Put(p.Path, img)
+			cached = img
+		}
+
+		p.Cols = cached.WidthCells
+		p.Rows = cached.HeightCells
+		heights[p.Path] = cached.HeightCells
+
+		// Assign a Kitty image ID if not already assigned
+		if _, ok := e.imagePathToID[p.Path]; !ok {
+			nextImageID++
+			e.imagePathToID[p.Path] = nextImageID
+		}
+	}
+
+	if len(heights) == 0 {
+		return nil
+	}
+
+	rpc := e.rpc
+	return func() tea.Msg {
+		_ = rpc.NotifyImageHeights(heights) //nolint:errcheck // best-effort height notification
+		return nil
+	}
+}
+
+// overlayImages injects Kitty graphics protocol escape sequences into the
+// rendered editor output to display images at their screen positions.
+func (e Editor) overlayImages(rendered string) string {
+	if len(e.imagePlacements) == 0 {
+		return rendered
+	}
+
+	lines := strings.Split(rendered, "\n")
+	var prefix strings.Builder
+
+	for _, p := range e.imagePlacements {
+		cached := e.imageCache.Get(p.Path)
+		if cached == nil || p.ScreenRow < 0 || p.ScreenRow >= len(lines) {
+			continue
+		}
+
+		id, ok := e.imagePathToID[p.Path]
+		if !ok {
+			continue
+		}
+
+		if !e.uploadedImages[id] {
+			// Transmit the image data (includes placement)
+			prefix.WriteString(KittyTransmit(id, cached))
+			e.uploadedImages[id] = true
+		} else {
+			// Just place the already-uploaded image
+			prefix.WriteString(KittyPlace(id, cached.WidthCells, cached.HeightCells))
+		}
+
+		// Move cursor to the image row and place
+		// Use CSI cursor position: \x1b[row;colH (1-based)
+		row := p.ScreenRow + 1 // convert to 1-based
+		fmt.Fprintf(&prefix, "\x1b[%d;1H", row)
+		prefix.WriteString(KittyPlace(id, cached.WidthCells, cached.HeightCells))
+	}
+
+	if prefix.Len() == 0 {
+		return rendered
+	}
+
+	// Save cursor, emit image sequences, restore cursor, then the normal content
+	return "\x1b7" + prefix.String() + "\x1b8" + rendered
 }
 
 func (e *Editor) Close() {

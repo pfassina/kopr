@@ -602,6 +602,301 @@ if vim.bo[buf].filetype == 'markdown' then
 end
 `
 
+// ImagePlacement describes where an image should be rendered on screen.
+type ImagePlacement struct {
+	Path      string // absolute path to image file
+	ScreenRow int    // 0-based row in the editor view
+	Cols      int    // width in cells
+	Rows      int    // height in cells
+}
+
+// SetupImageRendering installs autocmds that detect markdown image links,
+// conceal their syntax, reserve vertical space with virtual lines, and notify
+// Go of visible image positions via RPC. When enabled is false, any existing
+// image rendering is torn down.
+func (r *RPC) SetupImageRendering(enabled bool, program *tea.Program, kittySupported bool) error {
+	if err := r.client.RegisterHandler("kopr:image-positions", func(args ...interface{}) {
+		if program == nil || len(args) < 1 {
+			return
+		}
+		raw, ok := args[0].([]interface{})
+		if !ok {
+			return
+		}
+		placements := make([]ImagePlacement, 0, len(raw))
+		for _, item := range raw {
+			m, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			p := ImagePlacement{}
+			if v, ok := m["path"].(string); ok {
+				p.Path = v
+			}
+			if v, ok := m["row"]; ok {
+				p.ScreenRow = toInt(v)
+			}
+			if v, ok := m["cols"]; ok {
+				p.Cols = toInt(v)
+			}
+			if v, ok := m["rows"]; ok {
+				p.Rows = toInt(v)
+			}
+			if p.Path != "" {
+				placements = append(placements, p)
+			}
+		}
+		program.Send(ImagePositionsMsg{Placements: placements})
+	}); err != nil {
+		return err
+	}
+	if err := r.client.Subscribe("kopr:image-positions"); err != nil {
+		return err
+	}
+
+	return r.client.ExecLua(imageRenderingLua, nil, enabled, r.client.ChannelID(), kittySupported)
+}
+
+// toInt converts various numeric types from msgpack to int.
+func toInt(v interface{}) int {
+	switch n := v.(type) {
+	case int64:
+		return int(n)
+	case uint64:
+		return int(n)
+	case float64:
+		return int(n)
+	case int:
+		return n
+	default:
+		return 0
+	}
+}
+
+// NotifyImageHeights sends image height information to Neovim so it can
+// reserve the correct number of virtual lines for each image.
+func (r *RPC) NotifyImageHeights(heights map[string]int) error {
+	return r.client.ExecLua(`
+local heights = ...
+if _G.kopr_image_heights == nil then _G.kopr_image_heights = {} end
+for path, h in pairs(heights) do
+  _G.kopr_image_heights[path] = h
+end
+-- Re-trigger rendering if we have the function
+if _G.kopr_render_images then
+  local buf = vim.api.nvim_get_current_buf()
+  if vim.bo[buf].filetype == 'markdown' then
+    _G.kopr_render_images(buf, vim.api.nvim_win_get_cursor(0)[1] - 1)
+  end
+end
+`, nil, heights)
+}
+
+const imageRenderingLua = `
+local enabled, chan, kitty = ...
+
+local group = 'KoprImages'
+vim.api.nvim_create_augroup(group, {clear = true})
+
+if not enabled then
+  -- Clean up global state
+  _G.kopr_image_heights = nil
+  _G.kopr_render_images = nil
+  local ns = vim.api.nvim_create_namespace('kopr-images')
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+    end
+  end
+  return
+end
+
+if _G.kopr_image_heights == nil then _G.kopr_image_heights = {} end
+
+local ns = vim.api.nvim_create_namespace('kopr-images')
+
+-- Find image links in the buffer using regex (works without treesitter)
+local function find_images(buf)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local images = {}
+  for i, line in ipairs(lines) do
+    -- Match ![alt](path) - capture the whole match positions and the path
+    local s, e, alt, path = line:find('!%[([^%]]*)%]%(([^%)]+)%)')
+    if s then
+      images[#images + 1] = {
+        row = i - 1,  -- 0-based
+        col_start = s - 1,
+        col_end = e,
+        alt = alt,
+        path = path,
+      }
+    end
+  end
+  return images
+end
+
+-- Resolve image path relative to the buffer's directory
+local function resolve_path(buf, img_path)
+  -- Skip remote URLs
+  if img_path:match('^https?://') or img_path:match('^ftp://') then
+    return nil
+  end
+  -- Absolute path
+  if img_path:sub(1, 1) == '/' then
+    return img_path
+  end
+  -- Relative to buffer directory
+  local buf_path = vim.api.nvim_buf_get_name(buf)
+  if buf_path == '' then return nil end
+  local dir = vim.fn.fnamemodify(buf_path, ':h')
+  return dir .. '/' .. img_path
+end
+
+local function render_images(buf, skip_row)
+  vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+
+  local images = find_images(buf)
+  if #images == 0 then
+    -- Notify Go that no images are visible
+    vim.rpcnotify(chan, 'kopr:image-positions', {})
+    return
+  end
+
+  local win = vim.api.nvim_get_current_win()
+  local positions = {}
+
+  for _, img in ipairs(images) do
+    local abs_path = resolve_path(buf, img.path)
+    if not abs_path then goto continue end
+
+    -- Get height from Go-provided heights, default to 0 (will be updated)
+    local height = (_G.kopr_image_heights or {})[abs_path] or 0
+
+    -- On cursor line: show raw markdown
+    if skip_row and img.row == skip_row then
+      goto continue
+    end
+
+    -- Conceal the ![alt](path) text
+    local line = vim.api.nvim_buf_get_lines(buf, img.row, img.row + 1, false)[1] or ''
+    vim.api.nvim_buf_set_extmark(buf, ns, img.row, img.col_start, {
+      end_row = img.row,
+      end_col = math.min(img.col_end, #line),
+      conceal = '',
+    })
+
+    -- Add virtual lines to reserve space
+    if height > 0 then
+      local vlines = {}
+      if kitty then
+        -- Blank lines that will be overlaid with the actual image by Go
+        for _ = 1, height do
+          vlines[#vlines + 1] = {{'', ''}}
+        end
+      else
+        -- Text fallback: show [img: filename]
+        local fname = vim.fn.fnamemodify(img.path, ':t')
+        local exists = vim.fn.filereadable(abs_path) == 1
+        local label
+        if exists then
+          label = '[img: ' .. fname .. ']'
+        else
+          label = '[img: ' .. fname .. ' (not found)]'
+        end
+        vlines[#vlines + 1] = {{label, 'Comment'}}
+      end
+      if #vlines > 0 then
+        vim.api.nvim_buf_set_extmark(buf, ns, img.row, 0, {
+          virt_lines = vlines,
+        })
+      end
+    else
+      -- Height not yet known; show a placeholder and request height from Go
+      local fname = vim.fn.fnamemodify(img.path, ':t')
+      vim.api.nvim_buf_set_extmark(buf, ns, img.row, 0, {
+        virt_lines = {{{kitty and '' or '[img: ' .. fname .. ']', kitty and '' or 'Comment'}}},
+      })
+    end
+
+    -- Compute screen position for Go to place the image
+    local screen = vim.fn.screenpos(win, img.row + 1, 1)
+    if screen and screen.row > 0 then
+      positions[#positions + 1] = {
+        path = abs_path,
+        row = screen.row + 1,  -- image goes below the concealed line
+        cols = 0,  -- filled in by Go from ProcessedImage
+        rows = height,
+      }
+    end
+
+    ::continue::
+  end
+
+  vim.rpcnotify(chan, 'kopr:image-positions', positions)
+end
+
+_G.kopr_render_images = render_images
+
+local last_cursor_row = -1
+
+local function scheduled_render(buf, skip_row)
+  vim.schedule(function()
+    if vim.api.nvim_buf_is_valid(buf) then
+      render_images(buf, skip_row)
+    end
+  end)
+end
+
+vim.api.nvim_create_autocmd(
+  {'BufEnter', 'TextChanged', 'InsertLeave'},
+  {
+    group = group,
+    pattern = '*.md',
+    callback = function(args)
+      if not vim.api.nvim_buf_is_valid(args.buf) then return end
+      if vim.bo[args.buf].filetype ~= 'markdown' then return end
+      last_cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
+      scheduled_render(args.buf, last_cursor_row)
+    end,
+  }
+)
+
+vim.api.nvim_create_autocmd('CursorMoved', {
+  group = group,
+  pattern = '*.md',
+  callback = function(args)
+    if not vim.api.nvim_buf_is_valid(args.buf) then return end
+    local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+    if row == last_cursor_row then return end
+    last_cursor_row = row
+    render_images(args.buf, row)
+  end,
+})
+
+vim.api.nvim_create_autocmd('WinScrolled', {
+  group = group,
+  pattern = '*.md',
+  callback = function(args)
+    if not vim.api.nvim_buf_is_valid(args.buf) then return end
+    if vim.bo[args.buf].filetype ~= 'markdown' then return end
+    last_cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
+    scheduled_render(args.buf, last_cursor_row)
+  end,
+})
+
+-- Render current buffer immediately if markdown
+local buf = vim.api.nvim_get_current_buf()
+if vim.bo[buf].filetype == 'markdown' then
+  last_cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
+  scheduled_render(buf, last_cursor_row)
+end
+`
+
+// ImagePositionsMsg is sent from the Neovim RPC handler when image positions change.
+type ImagePositionsMsg struct {
+	Placements []ImagePlacement
+}
+
 // GetVisualSelection returns the text currently selected in visual mode.
 // If not in a visual mode, returns an empty string.
 func (r *RPC) GetVisualSelection() (string, error) {

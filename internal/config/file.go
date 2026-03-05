@@ -19,6 +19,7 @@ type fileConfig struct {
 	LeaderTimeout     *int    `toml:"leader_timeout"`
 	AutoFormatOnSave    *bool   `toml:"auto_format_on_save"`
 	RenderMath          *bool   `toml:"render_math"`
+	InlineImages        *bool   `toml:"inline_images"`
 	TreesitterParsers   *string `toml:"treesitter_parsers"`
 }
 
@@ -79,6 +80,9 @@ func LoadFile(cfg *Config) (bool, error) {
 	}
 	if fc.RenderMath != nil {
 		cfg.RenderMath = *fc.RenderMath
+	}
+	if fc.InlineImages != nil {
+		cfg.InlineImages = *fc.InlineImages
 	}
 	if fc.TreesitterParsers != nil {
 		cfg.TreesitterParsers = ExpandHome(*fc.TreesitterParsers)

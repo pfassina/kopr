@@ -27,6 +27,10 @@ type Config struct {
 	// RenderMath enables LaTeX math rendering via render-markdown.nvim's latex module.
 	RenderMath bool
 
+	// InlineImages enables rendering of markdown images inline using the
+	// Kitty graphics protocol (with text fallback for unsupported terminals).
+	InlineImages bool
+
 	// TreesitterParsers is a path to a directory containing compiled treesitter
 	// parser .so files (e.g. ~/.local/share/nvim/site). When set, Kopr adds this
 	// to Neovim's runtimepath so fenced code blocks get syntax highlighting for
@@ -55,5 +59,6 @@ func Default() Config {
 		NvimMode:         "managed",
 		AutoFormatOnSave: true,
 		RenderMath:       true,
+		InlineImages:     true,
 	}
 }

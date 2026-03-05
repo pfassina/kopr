@@ -120,7 +120,7 @@ func New(cfg config.Config) App {
 
 	a := App{
 		cfg:      cfg,
-		editor:   editor.New(cfg.VaultPath, editor.ProfileMode(cfg.NvimMode), cfg.Colorscheme, cfg.RenderMath, cfg.TreesitterParsers),
+		editor:   editor.New(cfg.VaultPath, editor.ProfileMode(cfg.NvimMode), cfg.Colorscheme, cfg.RenderMath, cfg.InlineImages, cfg.TreesitterParsers),
 		tree:     t,
 		info:     panel.NewInfo(),
 		status:   panel.NewStatus(cfg.VaultPath),
@@ -1503,6 +1503,17 @@ func (a *App) ToggleZen() {
 		a.setFocus(focusEditor)
 	}
 	a.updateLayout()
+}
+
+func (a *App) ToggleImages() {
+	enabled := !a.editor.InlineImages()
+	a.editor.SetInlineImages(enabled)
+	rpc := a.editor.GetRPC()
+	if rpc != nil {
+		if err := rpc.SetupImageRendering(enabled, a.program, editor.SupportsKittyGraphics()); err != nil {
+			a.status.SetError(fmt.Sprintf("image rendering: %v", err))
+		}
+	}
 }
 
 func modeDisplayName(mode editor.NvimMode) string {
