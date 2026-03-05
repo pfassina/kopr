@@ -92,6 +92,30 @@ When a session changes behavior or introduces a new invariant:
 - Use GitHub Issues as the unit of work.
 - For feature discussions-only sessions, draft an issue using the **Feature request** template.
 
+### Tackling a GitHub issue
+
+When asked to work on issue #N (e.g. "tackle issue #42"):
+
+1. **Fetch the issue** — use `gh issue view N` to read the full description and comments.
+2. **Plan** — enter plan mode to design the implementation, referencing the issue details.
+3. **Branch** — create a feature branch off `main` (e.g. `git checkout -b feat/short-description main`). Branch protection is enabled on `main`, so all changes must go through a PR.
+4. **Implement & test** — write the code, run `make test` and `make lint` before committing.
+5. **Submit PR** — push the branch and open a PR with `gh pr create`. Reference the issue (e.g. "Closes #42") in the PR body.
+6. **Auto-merge & cleanup** — enable auto-merge and branch deletion on the PR:
+   ```bash
+   gh pr merge --auto --squash --delete-branch
+   ```
+7. **Wait for merge** — poll until the PR is merged:
+   ```bash
+   gh pr checks --watch && gh pr view --json state -q '.state' # until MERGED
+   ```
+8. **Sync local** — once merged, return to `master` and pull latest:
+   ```bash
+   git checkout master
+   git pull origin main:master
+   git branch -d <feature-branch>
+   ```
+
 ## Coding Conventions
 
 - **Fail fast, loud errors (project policy)** — avoid silent error handling. In production code, check and propagate errors. If an error is intentionally ignored, use an explicit discard (`_ = err`) with a comment explaining why.
