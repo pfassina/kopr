@@ -32,6 +32,10 @@ SSH / Local Terminal
   inside `[[...]]`, including on the brackets. The `.md` suffix is optional in links and
   matched case-insensitively; targets may contain spaces. Resolution is by basename
   (case-insensitive DB lookup), so this works identically in local and SSH mode.
+- **Diagnostics are Go-side and event-driven**: `internal/markdown.Lint` runs on note open
+  and after save (after format-on-save), never as-you-type. Inline hints go through
+  Neovim's `vim.diagnostic` API over RPC; the list panel is a Bubble Tea panel carved out
+  of the editor column. Broken-link warnings use the same basename resolution as `gf`.
 
 ## Package map
 
@@ -39,7 +43,7 @@ SSH / Local Terminal
 - `internal/editor`: starts embedded Neovim, VT rendering, RPC control.
 - `internal/index`: SQLite schema, indexing pipeline, watcher, search/backlinks.
 - `internal/vault`: filesystem operations and helpers (templates/daily/inbox/link rewrite).
-- `internal/panel`: UI panels (tree/info/finder/status/prompt/which-key).
+- `internal/panel`: UI panels (tree/info/finder/status/prompt/which-key/diagnostics).
 - `internal/theme`: color palette shared by all panels; extracted from Neovim highlight groups.
 - `internal/config`: TOML config + first-run setup.
 - `internal/session`: persists UI state under `<vault>/.kopr/`.
