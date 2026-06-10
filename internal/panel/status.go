@@ -17,6 +17,7 @@ type Status struct {
 	vaultDir  string
 	clipboard string
 	errMsg    string
+	infoMsg   string
 	theme     *theme.Theme
 }
 
@@ -52,6 +53,17 @@ func (s *Status) SetError(msg string) {
 
 func (s *Status) ClearError() {
 	s.errMsg = ""
+}
+
+// SetMessage shows a neutral notice (e.g. "Config reloaded") in place of the
+// file name. It clears any pending error so stale errors don't mask it.
+func (s *Status) SetMessage(msg string) {
+	s.infoMsg = msg
+	s.errMsg = ""
+}
+
+func (s *Status) ClearMessage() {
+	s.infoMsg = ""
 }
 
 func (s Status) View() string {
@@ -97,6 +109,8 @@ func (s Status) View() string {
 			Foreground(th.Error).
 			Padding(0, 1)
 		fileSection = errStyle.Render(s.errMsg)
+	} else if s.infoMsg != "" {
+		fileSection = fileStyle.Render(s.infoMsg)
 	} else {
 		file := s.file
 		if file == "" {

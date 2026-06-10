@@ -132,6 +132,14 @@ func newBindings() map[string]*Binding {
 		"c": {
 			Key: "c", Label: "+config",
 			Children: map[string]*Binding{
+				"e": {Key: "e", Label: "Edit config", Action: func(a *App) tea.Cmd {
+					a.OpenConfigFile()
+					return nil
+				}},
+				"n": {Key: "n", Label: "Edit nvim config", Action: func(a *App) tea.Cmd {
+					a.OpenNvimConfig()
+					return nil
+				}},
 				"r": {Key: "r", Label: "Reload config", Action: func(a *App) tea.Cmd {
 					a.ReloadConfig()
 					return nil
@@ -382,42 +390,106 @@ func (a *App) GoBack() {
 	a.setFocus(focusEditor)
 }
 
-func (a *App) ReloadConfig() {
-	// Reload TOML config
-	cfg := config.Default()
-	if _, err := config.LoadFile(&cfg); err == nil {
-		a.cfg.Colorscheme = cfg.Colorscheme
-		a.cfg.ColorschemeRepo = cfg.ColorschemeRepo
-		a.cfg.LeaderTimeout = cfg.LeaderTimeout
+// OpenConfigFile opens config.toml in the embedded Neovim. Saving it
+// triggers a hot reload (see handleBufferWritten).
+func (a *App) OpenConfigFile() {
+	path := config.ConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		a.status.SetError(fmt.Sprintf("config dir: %v", err))
+		return
 	}
+	a.openExternalFile(path)
+}
+
+// OpenNvimConfig opens the Kopr Neovim profile's init.lua. Saving it
+// re-sources the profile (see handleBufferWritten).
+func (a *App) OpenNvimConfig() {
+	dir, err := editor.ConfigDir()
+	if err != nil {
+		a.status.SetError(fmt.Sprintf("nvim config dir: %v", err))
+		return
+	}
+	a.openExternalFile(filepath.Join(dir, "init.lua"))
+}
+
+// openExternalFile opens a file that lives outside the vault. The current
+// note is kept as gb (go back) history; the info panel is cleared since
+// backlinks don't apply.
+func (a *App) openExternalFile(path string) {
+	if a.currentFile != "" {
+		a.prevFile = a.currentFile
+	}
+	a.openInEditor(path)
+	a.currentFile = ""
+	a.status.ClearError()
+	a.status.ClearMessage()
+	a.status.SetFile(displayPath(path))
+	a.info.Clear()
+	a.setFocus(focusEditor)
+}
+
+// displayPath shortens a path under the home directory to ~/... for display.
+func displayPath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+
+func (a *App) ReloadConfig() {
+	// Reload TOML config. On parse errors, keep the current config and
+	// surface the error instead of applying a partial merge.
+	cfg := config.Default()
+	if _, err := config.LoadFile(&cfg); err != nil {
+		a.status.SetError(fmt.Sprintf("config reload: %v", err))
+		return
+	}
+
+	// Diff against the previous on-disk config (not a.cfg, which may carry
+	// CLI flag overrides) to report settings that need a restart.
+	restart := config.RestartRequired(a.fileCfg, cfg)
+	a.fileCfg = cfg
+
+	a.cfg.Colorscheme = cfg.Colorscheme
+	a.cfg.ColorschemeRepo = cfg.ColorschemeRepo
+	a.cfg.LeaderTimeout = cfg.LeaderTimeout
+	a.cfg.AutoFormatOnSave = cfg.AutoFormatOnSave
 
 	// Reload Neovim config and re-apply colorscheme
 	rpc := a.editor.GetRPC()
 	if rpc != nil {
 		if err := rpc.ExecLua("dofile(vim.fn.stdpath('config') .. '/init.lua')", nil); err != nil {
-			if a.program != nil {
-				a.program.Send(fatalErrorMsg{err: err})
-			}
+			a.status.SetError(fmt.Sprintf("nvim init.lua: %v", err))
 			return
 		}
 		// Re-apply colorscheme and extract new colors
 		if a.cfg.Colorscheme != "" {
 			if err := rpc.ApplyColorscheme(a.cfg.Colorscheme); err != nil {
 				a.status.SetError(fmt.Sprintf("colorscheme %q: %v", a.cfg.Colorscheme, err))
-			} else {
-				if colors, err := rpc.ExtractColors(); err == nil && colors != nil {
-					a.theme = theme.FromExtracted(colors, a.theme)
-					a.tree.SetTheme(&a.theme)
-					a.info.SetTheme(&a.theme)
-					a.finder.SetTheme(&a.theme)
-					a.prompt.SetTheme(&a.theme)
-					a.status.SetTheme(&a.theme)
-					a.whichKey.SetTheme(&a.theme)
-					a.editor.SetTheme(&a.theme)
-				}
-				rpc.ClearHighlightBgs()
+				return
 			}
+			if colors, err := rpc.ExtractColors(); err == nil && colors != nil {
+				a.theme = theme.FromExtracted(colors, a.theme)
+				a.tree.SetTheme(&a.theme)
+				a.info.SetTheme(&a.theme)
+				a.finder.SetTheme(&a.theme)
+				a.prompt.SetTheme(&a.theme)
+				a.status.SetTheme(&a.theme)
+				a.whichKey.SetTheme(&a.theme)
+				a.editor.SetTheme(&a.theme)
+			}
+			rpc.ClearHighlightBgs()
 		}
+	}
+
+	if len(restart) > 0 {
+		a.status.SetMessage("Config reloaded (restart needed for: " + strings.Join(restart, ", ") + ")")
+	} else {
+		a.status.SetMessage("Config reloaded")
 	}
 }
 
