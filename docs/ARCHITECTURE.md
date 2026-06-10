@@ -27,6 +27,11 @@ SSH / Local Terminal
 - **Basename uniqueness**: note filenames (basenames) are treated as unique within a vault.
 - **Backlinks by basename**: backlinks match link targets by basename.
 - **No RPC from `View()`**: Neovim RPC must never be invoked from Bubble Tea `View()`.
+- **Wiki-link following is Go-side**: `gf` is remapped to an RPC notification; Kopr (not
+  Neovim's native `gf`) parses the buffer and resolves the link. The cursor may be anywhere
+  inside `[[...]]`, including on the brackets. The `.md` suffix is optional in links and
+  matched case-insensitively; targets may contain spaces. Resolution is by basename
+  (case-insensitive DB lookup), so this works identically in local and SSH mode.
 
 ## Package map
 

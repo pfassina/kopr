@@ -315,12 +315,14 @@ func (a *App) FollowLink() {
 	// Get cursor position (line is 1-based, col is 0-based)
 	line, col, err := rpc.CursorPosition()
 	if err != nil {
+		a.status.SetError(fmt.Sprintf("follow link: %v", err))
 		return
 	}
 
 	// Get buffer content
 	content, err := rpc.BufferContent()
 	if err != nil {
+		a.status.SetError(fmt.Sprintf("follow link: %v", err))
 		return
 	}
 
@@ -345,9 +347,11 @@ func (a *App) FollowLink() {
 	targetPath := ""
 	if a.db != nil {
 		resolved, err := a.db.FindNoteByBasename(basename)
-		if err == nil && resolved != "" {
-			targetPath = resolved
+		if err != nil {
+			a.status.SetError(fmt.Sprintf("resolve %s: %v", link.Target, err))
+			return
 		}
+		targetPath = resolved
 	}
 	// Fallback: use basename as root-level path
 	if targetPath == "" {
@@ -362,6 +366,7 @@ func (a *App) FollowLink() {
 		}
 		frontmatter := fmt.Sprintf("---\ntitle: %s\n---\n\n", link.Target)
 		if _, err := a.vault.CreateNote(targetPath, frontmatter); err != nil {
+			a.status.SetError(fmt.Sprintf("create %s: %v", targetPath, err))
 			return
 		}
 		a.tree.Refresh()

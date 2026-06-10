@@ -158,3 +158,100 @@ func TestWikiLinkAt(t *testing.T) {
 		})
 	}
 }
+
+// TestWikiLinkAtEveryPosition verifies issue #12 acceptance criteria:
+// gf must work with the cursor anywhere inside [[...]], including on the
+// brackets and on the .md suffix, for targets containing spaces.
+func TestWikiLinkAtEveryPosition(t *testing.T) {
+	const prefix = "See "
+	const raw = "[[file name with spaces.md]]"
+	const want = "file name with spaces.md"
+	input := prefix + raw + " end"
+
+	links := ExtractWikiLinks([]byte(input))
+	start := len(prefix)
+	end := start + len(raw) // exclusive
+
+	for col := 0; col < len(input); col++ {
+		got := WikiLinkAt(links, 1, col)
+		inside := col >= start && col < end
+		if inside && (got == nil || got.Target != want) {
+			t.Errorf("col=%d (%q): expected target %q, got %+v", col, input[col], want, got)
+		}
+		if !inside && got != nil {
+			t.Errorf("col=%d (%q): expected no link, got target=%q", col, input[col], got.Target)
+		}
+	}
+}
+
+// TestWikiLinkAtMultibyte verifies cursor columns stay byte-based (matching
+// Neovim's nvim_win_get_cursor) when multibyte text precedes the link.
+func TestWikiLinkAtMultibyte(t *testing.T) {
+	input := "héllo wörld [[my note]]"
+	links := ExtractWikiLinks([]byte(input))
+
+	start := len("héllo wörld ") // byte offset of [[
+	for col := start; col < start+len("[[my note]]"); col++ {
+		got := WikiLinkAt(links, 1, col)
+		if got == nil || got.Target != "my note" {
+			t.Errorf("col=%d: expected target %q, got %+v", col, "my note", got)
+		}
+	}
+	if got := WikiLinkAt(links, 1, start-1); got != nil {
+		t.Errorf("col before link: expected no link, got target=%q", got.Target)
+	}
+}
+
+func TestExtractWikiLinksSpacesWithSectionAndAlias(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		target  string
+		section string
+		alias   string
+	}{
+		{
+			name:   "spaces with md suffix",
+			input:  "[[file name with spaces.md]]",
+			target: "file name with spaces.md",
+		},
+		{
+			name:    "spaces with section",
+			input:   "[[file name#some section]]",
+			target:  "file name",
+			section: "some section",
+		},
+		{
+			name:   "spaces with alias",
+			input:  "[[file name|display name]]",
+			target: "file name",
+			alias:  "display name",
+		},
+		{
+			name:    "md suffix with section and alias",
+			input:   "[[file name.md#sec|alias text]]",
+			target:  "file name.md",
+			section: "sec",
+			alias:   "alias text",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			links := ExtractWikiLinks([]byte(tt.input))
+			if len(links) != 1 {
+				t.Fatalf("got %d links, want 1", len(links))
+			}
+			l := links[0]
+			if l.Target != tt.target {
+				t.Errorf("target: got %q, want %q", l.Target, tt.target)
+			}
+			if l.Section != tt.section {
+				t.Errorf("section: got %q, want %q", l.Section, tt.section)
+			}
+			if l.Alias != tt.alias {
+				t.Errorf("alias: got %q, want %q", l.Alias, tt.alias)
+			}
+		})
+	}
+}
