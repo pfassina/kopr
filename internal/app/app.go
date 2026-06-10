@@ -38,7 +38,13 @@ type promptAction struct {
 }
 
 type App struct {
-	cfg      config.Config
+	cfg config.Config
+
+	// fileCfg snapshots the on-disk config (defaults + config.toml, no CLI
+	// flag overrides) so ReloadConfig can report which changed settings
+	// require a restart.
+	fileCfg config.Config
+
 	editor   editor.Editor
 	program  *tea.Program
 	tree     panel.Tree
@@ -101,6 +107,7 @@ func (a *App) navigateTo(relPath string) {
 	fullPath := filepath.Join(a.cfg.VaultPath, relPath)
 	a.openInEditor(fullPath)
 	a.status.ClearError()
+	a.status.ClearMessage()
 	a.status.SetFile(relPath)
 	a.currentFile = relPath
 	a.updateInfoPanel(relPath)
@@ -118,8 +125,17 @@ func New(cfg config.Config) App {
 		state = session.Default()
 	}
 
+	// Snapshot the on-disk config for restart-required diffs on reload. If
+	// reading fails here, fall back to the runtime config; the error itself
+	// surfaces on the next explicit reload.
+	fileCfg := config.Default()
+	if _, err := config.LoadFile(&fileCfg); err != nil {
+		fileCfg = cfg
+	}
+
 	a := App{
 		cfg:      cfg,
+		fileCfg:  fileCfg,
 		editor:   editor.New(cfg.VaultPath, editor.ProfileMode(cfg.NvimMode), cfg.Colorscheme, cfg.RenderMath, cfg.TreesitterParsers),
 		tree:     t,
 		info:     panel.NewInfo(),
@@ -795,7 +811,27 @@ func (a *App) handleNoteClose(save bool) tea.Cmd {
 	return nil
 }
 
+// isKoprConfigFile reports whether path is Kopr's config.toml or the Neovim
+// profile's init.lua — the files whose writes trigger a config hot-reload.
+func isKoprConfigFile(path string) bool {
+	clean := filepath.Clean(path)
+	if clean == filepath.Clean(config.ConfigPath()) {
+		return true
+	}
+	dir, err := editor.ConfigDir()
+	if err != nil {
+		return false
+	}
+	return clean == filepath.Join(dir, "init.lua")
+}
+
 func (a *App) handleBufferWritten(path string) tea.Cmd {
+	// Hot-reload when Kopr's own config files are saved.
+	if isKoprConfigFile(path) {
+		a.ReloadConfig()
+		return nil
+	}
+
 	// Always re-index on save so backlinks/search stay fresh.
 	cmds := []tea.Cmd{}
 	if a.indexer != nil && strings.HasSuffix(strings.ToLower(path), ".md") {
