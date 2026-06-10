@@ -145,6 +145,12 @@ func (a *App) ToggleDiagnosticsPanel() tea.Cmd {
 		a.updateLayout()
 		return nil
 	}
+	// The panel anchors to the editor column; without an open note there is
+	// nothing to lint and focus would land on an invisible panel.
+	if a.editor.ShowSplash() || a.currentFile == "" {
+		a.status.SetMessage("No note open")
+		return nil
+	}
 	a.diagnostics.Show()
 	a.setFocus(focusDiagnostics)
 	a.updateLayout()

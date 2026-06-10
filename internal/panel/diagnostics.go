@@ -77,6 +77,38 @@ func (d *Diagnostics) SetSize(width, height int) {
 	d.scrollIntoView()
 }
 
+// Height returns the panel height set by the layout.
+func (d Diagnostics) Height() int { return d.height }
+
+// Offset returns the current scroll offset.
+func (d Diagnostics) Offset() int { return d.offset }
+
+// SetCursor moves the selection to the given item index, clamped.
+func (d *Diagnostics) SetCursor(idx int) {
+	if len(d.items) == 0 {
+		return
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(d.items) {
+		idx = len(d.items) - 1
+	}
+	d.cursor = idx
+	d.scrollIntoView()
+}
+
+// ActivateRow emits the goto message for the given item index.
+func (d Diagnostics) ActivateRow(idx int) tea.Cmd {
+	if idx < 0 || idx >= len(d.items) {
+		return nil
+	}
+	item := d.items[idx]
+	return func() tea.Msg {
+		return DiagnosticsGotoMsg{Line: item.Line, Col: item.Col}
+	}
+}
+
 // PreferredHeight returns the desired panel height (header + rows), capped.
 func (d Diagnostics) PreferredHeight() int {
 	rows := len(d.items)

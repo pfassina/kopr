@@ -41,6 +41,7 @@ const (
 	mouseTargetEditor
 	mouseTargetInfo
 	mouseTargetStatus
+	mouseTargetDiagnostics
 )
 
 // mouseHitResult contains the result of hit-testing a mouse event.
@@ -94,6 +95,12 @@ func (a *App) hitTestMouse(msg tea.MouseMsg) mouseHitResult {
 			result.target = mouseTargetInfo
 			return result
 		}
+	}
+
+	// The diagnostics strip occupies the bottom rows of the editor column.
+	if a.diagnosticsVisible() && msg.Y >= layout.Height-a.diagnostics.Height() {
+		result.target = mouseTargetDiagnostics
+		return result
 	}
 
 	// Everything else falls in the editor column

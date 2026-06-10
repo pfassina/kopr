@@ -424,6 +424,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 
+		case mouseTargetDiagnostics:
+			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+				a.setFocus(focusDiagnostics)
+				// Row 0 of the strip is the header; items start at row 1.
+				showTree, showInfo := a.panelsVisible()
+				layout := ComputeLayout(a.width, a.height, showTree, showInfo, a.cfg.TreeWidth, a.cfg.InfoWidth)
+				stripTop := layout.Height - a.diagnostics.Height()
+				rowIdx := msg.Y - stripTop - 1 + a.diagnostics.Offset()
+				if rowIdx >= 0 {
+					a.diagnostics.SetCursor(rowIdx)
+					if a.doubleClick.isDoubleClick(msg.X, msg.Y) {
+						return a, a.diagnostics.ActivateRow(rowIdx)
+					}
+				}
+			}
+			return a, nil
+
 		case mouseTargetStatus:
 			return a, nil
 		}
