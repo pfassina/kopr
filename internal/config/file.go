@@ -20,6 +20,8 @@ type fileConfig struct {
 	AutoFormatOnSave    *bool   `toml:"auto_format_on_save"`
 	RenderMath          *bool   `toml:"render_math"`
 	TreesitterParsers   *string `toml:"treesitter_parsers"`
+	DiagnosticsEnabled  *bool   `toml:"diagnostics_enabled"`
+	DiagnosticsInline   *bool   `toml:"diagnostics_inline"`
 }
 
 // ConfigDir returns the kopr config directory, respecting XDG_CONFIG_HOME.
@@ -82,6 +84,12 @@ func LoadFile(cfg *Config) (bool, error) {
 	}
 	if fc.TreesitterParsers != nil {
 		cfg.TreesitterParsers = ExpandHome(*fc.TreesitterParsers)
+	}
+	if fc.DiagnosticsEnabled != nil {
+		cfg.DiagnosticsEnabled = *fc.DiagnosticsEnabled
+	}
+	if fc.DiagnosticsInline != nil {
+		cfg.DiagnosticsInline = *fc.DiagnosticsInline
 	}
 
 	return true, nil

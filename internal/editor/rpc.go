@@ -602,6 +602,39 @@ if vim.bo[buf].filetype == 'markdown' then
 end
 `
 
+// SetDiagnostics replaces all Kopr diagnostics on the current buffer.
+// Each entry must use Neovim's diagnostic keys: lnum (0-based), col,
+// end_col, severity (1=error, 2=warn), message, source.
+func (r *RPC) SetDiagnostics(entries []map[string]interface{}) error {
+	// ExecLua marshals nil slices as msgpack nil, which Lua sees as a non-table;
+	// always pass at least an empty list so clearing diagnostics works.
+	if entries == nil {
+		entries = []map[string]interface{}{}
+	}
+	return r.client.ExecLua(`
+local diags = ...
+local ns = vim.api.nvim_create_namespace('kopr-diagnostics')
+vim.diagnostic.config({
+  virtual_text = {prefix = '●'},
+  signs = true,
+  underline = true,
+  update_in_insert = false,
+}, ns)
+local buf = vim.api.nvim_get_current_buf()
+vim.diagnostic.set(ns, buf, diags)
+`, nil, entries)
+}
+
+// SetDiagnosticsVisible toggles inline display (virtual text, signs,
+// underline) of Kopr diagnostics without discarding them.
+func (r *RPC) SetDiagnosticsVisible(visible bool) error {
+	return r.client.ExecLua(`
+local visible = ...
+local ns = vim.api.nvim_create_namespace('kopr-diagnostics')
+vim.diagnostic.enable(visible, {ns_id = ns})
+`, nil, visible)
+}
+
 // GetVisualSelection returns the text currently selected in visual mode.
 // If not in a visual mode, returns an empty string.
 func (r *RPC) GetVisualSelection() (string, error) {

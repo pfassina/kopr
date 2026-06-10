@@ -16,6 +16,7 @@ type Theme struct {
 	StatusBg   lipgloss.Color
 	StatusFg   lipgloss.Color
 	Error      lipgloss.Color
+	Warning    lipgloss.Color
 	NormalMode lipgloss.Color
 	InsertMode lipgloss.Color
 	VisualMode lipgloss.Color
@@ -35,6 +36,7 @@ func DefaultTheme() Theme {
 		StatusBg:   lipgloss.Color("#313244"),
 		StatusFg:   lipgloss.Color("#cdd6f4"),
 		Error:      lipgloss.Color("#f38ba8"),
+		Warning:    lipgloss.Color("#f9e2af"),
 		NormalMode: lipgloss.Color("#89b4fa"),
 		InsertMode: lipgloss.Color("#a6e3a1"),
 		VisualMode: lipgloss.Color("#f9e2af"),

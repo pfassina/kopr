@@ -144,7 +144,7 @@ func (a *App) searchNoteContent(query string) []panel.FinderItem {
 
 // handleFinderResult handles a file selection from the finder.
 func (a *App) handleFinderResult(path string, line int) tea.Cmd {
-	a.navigateTo(path)
+	cmd := a.navigateTo(path)
 	a.focused = focusEditor
 	if line > 0 {
 		rpc := a.editor.GetRPC()
@@ -152,7 +152,7 @@ func (a *App) handleFinderResult(path string, line int) tea.Cmd {
 			rpc.SetCursorPosition(line, 0) //nolint:errcheck // best-effort cursor jump
 		}
 	}
-	return nil
+	return cmd
 }
 
 // createNoteFromFinder creates a new note from a finder query string.

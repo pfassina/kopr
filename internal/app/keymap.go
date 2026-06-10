@@ -127,6 +127,13 @@ func newBindings() map[string]*Binding {
 					a.FormatDocument()
 					return nil
 				}},
+				"d": {Key: "d", Label: "Toggle diagnostics", Action: func(a *App) tea.Cmd {
+					return a.ToggleDiagnosticsPanel()
+				}},
+				"h": {Key: "h", Label: "Toggle inline hints", Action: func(a *App) tea.Cmd {
+					a.ToggleInlineDiagnostics()
+					return nil
+				}},
 			},
 		},
 		"c": {
@@ -306,24 +313,25 @@ func (a *App) InsertTemplate() {
 }
 
 // FollowLink navigates to the wiki link under the cursor.
-func (a *App) FollowLink() {
+// The returned command lints the opened note (nil when nothing opened).
+func (a *App) FollowLink() tea.Cmd {
 	rpc := a.editor.GetRPC()
 	if rpc == nil {
-		return
+		return nil
 	}
 
 	// Get cursor position (line is 1-based, col is 0-based)
 	line, col, err := rpc.CursorPosition()
 	if err != nil {
 		a.status.SetError(fmt.Sprintf("follow link: %v", err))
-		return
+		return nil
 	}
 
 	// Get buffer content
 	content, err := rpc.BufferContent()
 	if err != nil {
 		a.status.SetError(fmt.Sprintf("follow link: %v", err))
-		return
+		return nil
 	}
 
 	// Join lines into single content block
@@ -339,7 +347,7 @@ func (a *App) FollowLink() {
 	links := markdown.ExtractWikiLinks(buf.Bytes())
 	link := markdown.WikiLinkAt(links, line, col)
 	if link == nil || link.Target == "" {
-		return
+		return nil
 	}
 
 	// Resolve the link target — try DB lookup by basename first
@@ -349,7 +357,7 @@ func (a *App) FollowLink() {
 		resolved, err := a.db.FindNoteByBasename(basename)
 		if err != nil {
 			a.status.SetError(fmt.Sprintf("resolve %s: %v", link.Target, err))
-			return
+			return nil
 		}
 		targetPath = resolved
 	}
@@ -362,37 +370,40 @@ func (a *App) FollowLink() {
 	if _, err := os.Stat(filepath.Join(a.cfg.VaultPath, targetPath)); err != nil {
 		if msg := a.checkUniqueBasename(targetPath); msg != "" {
 			a.status.SetError(msg)
-			return
+			return nil
 		}
 		frontmatter := fmt.Sprintf("---\ntitle: %s\n---\n\n", link.Target)
 		if _, err := a.vault.CreateNote(targetPath, frontmatter); err != nil {
 			a.status.SetError(fmt.Sprintf("create %s: %v", targetPath, err))
-			return
+			return nil
 		}
 		a.tree.Refresh()
 	}
 
-	a.navigateTo(targetPath)
+	cmd := a.navigateTo(targetPath)
 	a.setFocus(focusEditor)
+	return cmd
 }
 
 // GoBack navigates to the previously opened note.
-func (a *App) GoBack() {
+// The returned command lints the opened note (nil when nothing opened).
+func (a *App) GoBack() tea.Cmd {
 	if a.prevFile == "" {
-		return
+		return nil
 	}
 
 	if _, err := os.Stat(filepath.Join(a.cfg.VaultPath, a.prevFile)); err != nil {
 		a.prevFile = ""
-		return
+		return nil
 	}
 
 	// Swap so gb toggles between two notes, then navigate
 	target := a.prevFile
 	a.prevFile = a.currentFile
 	a.currentFile = "" // prevent navigateTo from overwriting prevFile
-	a.navigateTo(target)
+	cmd := a.navigateTo(target)
 	a.setFocus(focusEditor)
+	return cmd
 }
 
 // OpenConfigFile opens config.toml in the embedded Neovim. Saving it
@@ -464,6 +475,30 @@ func (a *App) ReloadConfig() {
 	a.cfg.LeaderTimeout = cfg.LeaderTimeout
 	a.cfg.AutoFormatOnSave = cfg.AutoFormatOnSave
 
+	// Apply diagnostics settings live.
+	inlineChanged := a.cfg.DiagnosticsInline != cfg.DiagnosticsInline
+	enabledChanged := a.cfg.DiagnosticsEnabled != cfg.DiagnosticsEnabled
+	a.cfg.DiagnosticsEnabled = cfg.DiagnosticsEnabled
+	a.cfg.DiagnosticsInline = cfg.DiagnosticsInline
+	if inlineChanged {
+		a.inlineDiags = cfg.DiagnosticsInline
+		if rpc := a.editor.GetRPC(); rpc != nil {
+			if err := rpc.SetDiagnosticsVisible(a.inlineDiags); err != nil {
+				a.status.SetError(fmt.Sprintf("diagnostics: %v", err))
+			}
+		}
+	}
+	if enabledChanged && !cfg.DiagnosticsEnabled {
+		a.clearDiagnostics()
+		if a.diagnostics.Visible() {
+			a.diagnostics.Hide()
+			if a.focused == focusDiagnostics {
+				a.setFocus(focusEditor)
+			}
+			a.updateLayout()
+		}
+	}
+
 	// Reload Neovim config and re-apply colorscheme
 	rpc := a.editor.GetRPC()
 	if rpc != nil {
@@ -486,6 +521,7 @@ func (a *App) ReloadConfig() {
 				a.status.SetTheme(&a.theme)
 				a.whichKey.SetTheme(&a.theme)
 				a.editor.SetTheme(&a.theme)
+				a.diagnostics.SetTheme(&a.theme)
 			}
 			rpc.ClearHighlightBgs()
 		}

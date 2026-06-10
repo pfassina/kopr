@@ -29,6 +29,7 @@ const (
 	focusTree
 	focusInfo
 	focusFinder
+	focusDiagnostics
 )
 
 type promptAction struct {
@@ -54,6 +55,7 @@ type App struct {
 	finder   panel.Finder
 	prompt      panel.Prompt
 	contextMenu panel.ContextMenu
+	diagnostics panel.Diagnostics
 	vault    *vault.Vault
 	db       *index.DB
 	indexer  *index.Indexer
@@ -70,6 +72,10 @@ type App struct {
 	// Leader key system
 	bindings map[string]*Binding
 	leader   LeaderState
+
+	// inlineDiags tracks whether inline diagnostic hints are visible in the
+	// editor; seeded from config, toggled at runtime via the leader key.
+	inlineDiags bool
 
 	// pendingPrompt tracks which action the overlay prompt is serving.
 	pendingPrompt promptAction
@@ -100,7 +106,8 @@ type App struct {
 }
 
 // navigateTo opens a note and updates the navigation history.
-func (a *App) navigateTo(relPath string) {
+// The returned command lints the freshly opened note (nil when disabled).
+func (a *App) navigateTo(relPath string) tea.Cmd {
 	if a.currentFile != "" && a.currentFile != relPath {
 		a.prevFile = a.currentFile
 	}
@@ -111,6 +118,7 @@ func (a *App) navigateTo(relPath string) {
 	a.status.SetFile(relPath)
 	a.currentFile = relPath
 	a.updateInfoPanel(relPath)
+	return a.lintCurrentNote()
 }
 
 func New(cfg config.Config) App {
@@ -144,6 +152,8 @@ func New(cfg config.Config) App {
 		finder:   f,
 		prompt:      panel.NewPrompt(),
 		contextMenu: panel.NewContextMenu(),
+		diagnostics: panel.NewDiagnostics(),
+		inlineDiags: cfg.DiagnosticsInline,
 		vault:    v,
 		store:    store,
 		theme:    theme.DefaultTheme(),
@@ -160,6 +170,7 @@ func New(cfg config.Config) App {
 	a.whichKey.SetTheme(&a.theme)
 	a.editor.SetTheme(&a.theme)
 	a.contextMenu.SetTheme(&a.theme)
+	a.diagnostics.SetTheme(&a.theme)
 
 	// Initialize index
 	dbPath := filepath.Join(cfg.VaultPath, ".kopr", "index.db")
@@ -283,7 +294,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Side panels handle their own keys
-		if a.focused == focusTree || a.focused == focusInfo {
+		if a.focused == focusTree || a.focused == focusInfo || a.focused == focusDiagnostics {
 			break
 		}
 
@@ -413,6 +424,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 
+		case mouseTargetDiagnostics:
+			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+				a.setFocus(focusDiagnostics)
+				// Row 0 of the strip is the header; items start at row 1.
+				showTree, showInfo := a.panelsVisible()
+				layout := ComputeLayout(a.width, a.height, showTree, showInfo, a.cfg.TreeWidth, a.cfg.InfoWidth)
+				stripTop := layout.Height - a.diagnostics.Height()
+				rowIdx := msg.Y - stripTop - 1 + a.diagnostics.Offset()
+				if rowIdx >= 0 {
+					a.diagnostics.SetCursor(rowIdx)
+					if a.doubleClick.isDoubleClick(msg.X, msg.Y) {
+						return a, a.diagnostics.ActivateRow(rowIdx)
+					}
+				}
+			}
+			return a, nil
+
 		case mouseTargetStatus:
 			return a, nil
 		}
@@ -485,9 +513,36 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.setFocus(focusEditor)
 		return a, nil
 
-	case panel.FileSelectedMsg:
-		a.navigateTo(msg.Path)
+	case diagnosticsMsg:
+		if msg.err != nil {
+			a.status.SetError(fmt.Sprintf("diagnostics: %v", msg.err))
+			return a, nil
+		}
+		// Drop stale results from a note that's no longer open.
+		if msg.relPath != a.currentFile {
+			return a, nil
+		}
+		a.applyDiagnostics(msg.diags)
+		return a, nil
+
+	case panel.DiagnosticsGotoMsg:
+		rpc := a.editor.GetRPC()
+		if rpc != nil {
+			rpc.SetCursorPosition(msg.Line, msg.Col) //nolint:errcheck // best-effort cursor jump
+		}
 		a.setFocus(focusEditor)
+		return a, nil
+
+	case panel.DiagnosticsClosedMsg:
+		a.diagnostics.Hide()
+		a.setFocus(focusEditor)
+		a.updateLayout()
+		return a, nil
+
+	case panel.FileSelectedMsg:
+		cmd := a.navigateTo(msg.Path)
+		a.setFocus(focusEditor)
+		return a, cmd
 
 	case panel.FinderResultMsg:
 		a.handleFinderResult(msg.Path, msg.Line)
@@ -507,12 +562,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.setFocus(focusEditor)
 
 	case editor.FollowLinkMsg:
-		a.FollowLink()
-		return a, nil
+		return a, a.FollowLink()
 
 	case editor.GoBackMsg:
-		a.GoBack()
-		return a, nil
+		return a, a.GoBack()
 
 	case editor.NoteClosedMsg:
 		// If prompt is already active, upgrade the pending action to "close"
@@ -597,6 +650,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.whichKey.SetTheme(&a.theme)
 			a.editor.SetTheme(&a.theme)
 			a.contextMenu.SetTheme(&a.theme)
+			a.diagnostics.SetTheme(&a.theme)
 		}
 		return a, nil
 
@@ -633,6 +687,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, cmd
 		case focusInfo:
 			a.info, cmd = a.info.Update(msg)
+			return a, cmd
+		case focusDiagnostics:
+			a.diagnostics, cmd = a.diagnostics.Update(msg)
 			return a, cmd
 		default:
 			a.editor, cmd = a.editor.Update(msg)
@@ -675,6 +732,9 @@ func (a *App) View() string {
 	editorTitle := a.editorTitle()
 
 	editorView := editorTitle + "\n" + a.editor.View()
+	if a.diagnosticsVisible() {
+		editorView += "\n" + a.diagnostics.View()
+	}
 
 	var main string
 
@@ -832,32 +892,49 @@ func (a *App) handleBufferWritten(path string) tea.Cmd {
 		return nil
 	}
 
+	isMarkdown := strings.HasSuffix(strings.ToLower(path), ".md")
+
 	// Always re-index on save so backlinks/search stay fresh.
 	cmds := []tea.Cmd{}
-	if a.indexer != nil && strings.HasSuffix(strings.ToLower(path), ".md") {
+	if a.indexer != nil && isMarkdown {
 		cmds = append(cmds, a.indexFile(path))
 	}
 
-	// Optional: format on save (scoped to the active buffer).
-	if !a.cfg.AutoFormatOnSave {
-		if len(cmds) == 0 {
-			return nil
-		}
-		return tea.Batch(cmds...)
+	// Lint the saved note when it's the one currently open.
+	var lintCmd tea.Cmd
+	if isMarkdown && a.currentFile != "" &&
+		filepath.Join(a.cfg.VaultPath, a.currentFile) == filepath.Clean(path) {
+		lintCmd = a.lintCurrentNote()
 	}
-	if !strings.HasSuffix(strings.ToLower(path), ".md") {
-		if len(cmds) == 0 {
-			return nil
-		}
-		return tea.Batch(cmds...)
+
+	formatCmd := a.formatOnSaveCmd(path, isMarkdown)
+
+	// Lint must run after format-on-save so it sees the formatted buffer.
+	switch {
+	case formatCmd != nil && lintCmd != nil:
+		cmds = append(cmds, tea.Sequence(formatCmd, lintCmd))
+	case formatCmd != nil:
+		cmds = append(cmds, formatCmd)
+	case lintCmd != nil:
+		cmds = append(cmds, lintCmd)
+	}
+
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+// formatOnSaveCmd returns the format-on-save command for path, or nil when
+// formatting doesn't apply (disabled, not markdown, or not the active buffer).
+func (a *App) formatOnSaveCmd(path string, isMarkdown bool) tea.Cmd {
+	if !a.cfg.AutoFormatOnSave || !isMarkdown {
+		return nil
 	}
 
 	rpc := a.editor.GetRPC()
 	if rpc == nil {
-		if len(cmds) == 0 {
-			return nil
-		}
-		return tea.Batch(cmds...)
+		return nil
 	}
 
 	// Only format the currently active file.
@@ -866,13 +943,10 @@ func (a *App) handleBufferWritten(path string) tea.Cmd {
 		return fatalCmd(fmt.Errorf("nvim current file: %w", err))
 	}
 	if cur != path {
-		if len(cmds) == 0 {
-			return nil
-		}
-		return tea.Batch(cmds...)
+		return nil
 	}
 
-	formatCmd := func() tea.Msg {
+	return func() tea.Msg {
 		// Capture cursor so we can keep the user's position.
 		line, col, err := rpc.CursorPosition()
 		if err != nil {
@@ -923,9 +997,6 @@ func (a *App) handleBufferWritten(path string) tea.Cmd {
 		}
 		return nil
 	}
-
-	cmds = append(cmds, formatCmd)
-	return tea.Batch(cmds...)
 }
 
 // showSplash transitions the editor to the splash screen.
@@ -943,6 +1014,8 @@ func (a *App) showSplash() {
 	a.status.SetFile("")
 	a.currentFile = ""
 	a.info.Clear()
+	a.diagnostics.Hide()
+	a.diagnostics.SetItems(nil)
 	a.setFocus(focusEditor)
 	a.updateLayout()
 }
@@ -1436,7 +1509,17 @@ func (a *App) updateLayout() tea.Cmd {
 	a.status.SetWidth(a.width)
 	a.whichKey.SetWidth(a.width / 2)
 
-	editorHeight := layout.Height - 1 // -1 for editor title row
+	// Diagnostics strip is carved out of the editor column only.
+	diagHeight := 0
+	if a.diagnosticsVisible() {
+		diagHeight = a.diagnostics.PreferredHeight()
+		if maxH := layout.Height / 2; diagHeight > maxH {
+			diagHeight = maxH
+		}
+		a.diagnostics.SetSize(layout.EditorWidth, diagHeight)
+	}
+
+	editorHeight := layout.Height - 1 - diagHeight // -1 for editor title row
 	if editorHeight < 1 {
 		editorHeight = 1
 	}
@@ -1491,6 +1574,7 @@ func (a *App) editorTitle() string {
 func (a *App) setFocus(target focusedPanel) {
 	a.tree.SetFocused(target == focusTree)
 	a.info.SetFocused(target == focusInfo)
+	a.diagnostics.SetFocused(target == focusDiagnostics)
 	a.editor.SetFocused(target == focusEditor)
 	a.focused = target
 }
