@@ -63,6 +63,10 @@ func FromExtracted(colors map[string][2]string, base Theme) Theme {
 		t.Error = lipgloss.Color(c)
 	}
 
+	if c := fg(colors, "WarningMsg"); isSet(c) {
+		t.Warning = lipgloss.Color(c)
+	}
+
 	// Mode colors derived from the palette
 	t.NormalMode = t.Accent
 
